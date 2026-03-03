@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller build artifacts
+build/
+client/build/
+client_mac/build/
+
+# Sensitive files
+server/sessions.json
+client/dist/.deploy_code
+
+# Environment variables (contains sensitive information)
+.env
+*.env
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Zip archives
+*.zip

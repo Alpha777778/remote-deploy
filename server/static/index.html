@@ -1,0 +1,2451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Remote Deploy - 远程部署控制台</title>
+<style>
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg-primary: #1e1e1e;
+    --bg-secondary: #2d2d2d;
+    --bg-tertiary: #252526;
+    --bg-hover: #3a3a3a;
+    --bg-input: #3c3c3c;
+    --border-color: #404040;
+    --border-active: #007acc;
+    --text-primary: #cccccc;
+    --text-secondary: #969696;
+    --text-bright: #e0e0e0;
+    --color-green: #00ff88;
+    --color-yellow: #ffaa00;
+    --color-red: #ff4444;
+    --color-cyan: #00bcd4;
+    --color-white: #e0e0e0;
+    --color-accent: #007acc;
+    --sidebar-width: 280px;
+    --topbar-height: 48px;
+    --input-height: 56px;
+}
+
+html, body {
+    height: 100%;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    overflow: hidden;
+}
+
+/* ===================== Top Bar ===================== */
+.topbar {
+    height: var(--topbar-height);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+}
+
+.topbar-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-bright);
+    letter-spacing: 0.5px;
+}
+
+.topbar-title span {
+    color: var(--color-accent);
+}
+
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--color-red);
+    transition: background-color 0.3s ease;
+}
+
+.status-dot.connected {
+    background: var(--color-green);
+    box-shadow: 0 0 6px rgba(0, 255, 136, 0.4);
+}
+
+/* ===================== Layout ===================== */
+.layout {
+    display: flex;
+    height: calc(100vh - var(--topbar-height));
+    margin-top: var(--topbar-height);
+}
+
+/* ===================== Sidebar ===================== */
+.sidebar {
+    width: var(--sidebar-width);
+    min-width: var(--sidebar-width);
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sidebar-header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.device-count {
+    background: var(--bg-hover);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.device-list {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px 8px;
+    scroll-padding-top: 4px;
+}
+
+.device-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.device-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.device-list::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+.sidebar-downloads {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.sidebar-downloads-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.sidebar-downloads-btns {
+    display: flex;
+    gap: 8px;
+}
+
+.dl-btn {
+    flex: 1;
+    text-align: center;
+    padding: 6px 0;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: opacity 0.15s;
+}
+
+.dl-btn:hover {
+    opacity: 0.85;
+}
+
+.dl-win {
+    background: #0078d4;
+    color: #fff;
+}
+
+.dl-mac {
+    background: #555;
+    color: #fff;
+}
+
+.device-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
+}
+
+.device-empty-icon {
+    font-size: 36px;
+    margin-bottom: 12px;
+    opacity: 0.3;
+}
+
+.device-empty-text {
+    line-height: 1.5;
+}
+
+/* ===================== Device Card ===================== */
+.device-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    animation: fadeIn 0.2s ease;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.device-card:hover {
+    background: var(--bg-hover);
+    border-color: #555;
+}
+
+.device-card.selected {
+    border-color: var(--color-accent);
+    background: rgba(0, 122, 204, 0.08);
+}
+
+.device-card.offline {
+    opacity: 0.5;
+}
+
+.device-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    min-width: 0;
+}
+
+.device-code {
+    font-size: 18px;
+    font-weight: 700;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    color: var(--text-bright);
+    letter-spacing: 2px;
+}
+
+.device-nickname {
+    font-size: 12px;
+    color: var(--color-accent);
+    margin-top: 2px;
+    cursor: pointer;
+}
+
+.device-nickname:hover {
+    text-decoration: underline;
+}
+
+.device-nickname.empty {
+    color: var(--text-secondary);
+    opacity: 0.6;
+    font-style: italic;
+}
+
+.device-status-badge {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 10px;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.device-status-badge.online {
+    background: rgba(0, 255, 136, 0.12);
+    color: var(--color-green);
+}
+
+.device-status-badge.offline {
+    background: rgba(255, 68, 68, 0.12);
+    color: var(--color-red);
+}
+
+.device-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.device-info-row {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.device-info-row .label {
+    color: var(--text-secondary);
+    min-width: 28px;
+}
+
+.device-info-row .value {
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* ===================== Main Area ===================== */
+.main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+}
+
+/* ===================== Chat Header ===================== */
+.chat-header {
+    height: 42px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.chat-header-device {
+    color: var(--color-accent);
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.chat-header-nick {
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.codex-status {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-right: 8px;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.model-select {
+    margin-left: auto;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 3px 8px;
+    cursor: pointer;
+    outline: none;
+    flex-shrink: 0;
+}
+
+.model-select:focus {
+    border-color: var(--color-accent);
+}
+
+.codex-status.active {
+    display: flex;
+}
+
+.codex-status .spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--color-accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ===================== Chat Live Status Bubble ===================== */
+.chat-live-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    align-self: flex-start;
+    margin: 4px 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.live-status-dots {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.live-status-dots span {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    background: var(--color-yellow);
+    border-radius: 50%;
+    animation: blink 1.2s ease-in-out infinite;
+}
+
+.live-status-dots span:nth-child(2) { animation-delay: 0.2s; }
+.live-status-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes blink {
+    0%, 80%, 100% { opacity: 0.25; }
+    40% { opacity: 1; }
+}
+
+.clear-btn {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.clear-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: #555;
+}
+
+/* ===================== Chat Area ===================== */
+.chat-area {
+    flex: 1;
+    background: var(--bg-primary);
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.chat-area::-webkit-scrollbar {
+    width: 8px;
+}
+
+.chat-area::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+.chat-area::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.chat-area::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* ===================== Content Body (chat + task panel side by side) ===================== */
+.content-body {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* ===================== Task Panel ===================== */
+.task-panel {
+    width: 260px;
+    flex-shrink: 0;
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.task-panel-header {
+    padding: 9px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+
+.task-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+.task-panel-body::-webkit-scrollbar { width: 4px; }
+.task-panel-body::-webkit-scrollbar-track { background: transparent; }
+.task-panel-body::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 2px; }
+
+.task-panel-empty {
+    padding: 24px 14px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-align: center;
+    opacity: 0.5;
+}
+
+.task-round { padding: 0; }
+
+.task-panel-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 6px 14px;
+    opacity: 0.4;
+}
+
+.task-step {
+    display: flex;
+    gap: 7px;
+    padding: 3px 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    align-items: flex-start;
+}
+
+.task-step-icon {
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+}
+
+.task-step-text {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+    color: var(--text-primary);
+}
+
+.task-step.step-instruction .task-step-icon { color: var(--color-accent); }
+.task-step.step-instruction .task-step-text { color: var(--color-accent); font-weight: 500; }
+
+.task-step.step-calling .task-step-icon { color: var(--color-yellow); }
+.task-step.step-calling .task-step-text { color: var(--text-secondary); }
+
+.task-step.step-thinking .task-step-text {
+    color: var(--color-yellow);
+    font-size: 11px;
+    font-style: italic;
+}
+
+.task-step.step-cmd .task-step-icon { color: var(--color-cyan); }
+.task-step.step-cmd .task-step-text {
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 10px;
+    color: var(--color-cyan);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.task-step.step-done .task-step-icon { color: var(--color-green); }
+.task-step.step-done .task-step-text { color: var(--text-secondary); font-size: 11px; }
+
+.task-step.step-error .task-step-icon { color: var(--color-red); }
+.task-step.step-error .task-step-text { color: var(--color-red); font-size: 11px; }
+
+.task-step.step-reply .task-step-icon { color: var(--color-accent); }
+
+@media (max-width: 768px) {
+    .task-panel { display: none; }
+}
+
+/* ===================== Chat Welcome ===================== */
+.chat-welcome {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+    text-align: center;
+    gap: 8px;
+}
+
+.chat-welcome .logo {
+    font-size: 18px;
+    color: var(--color-accent);
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.chat-welcome .hint {
+    font-size: 12px;
+    opacity: 0.7;
+    line-height: 1.6;
+}
+
+/* ===================== Chat Messages ===================== */
+.chat-msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 80%;
+    animation: fadeIn 0.15s ease;
+}
+
+/* User messages - right aligned */
+.chat-msg.user {
+    align-self: flex-end;
+    align-items: flex-end;
+}
+
+.chat-msg.user .chat-bubble {
+    background: var(--color-accent);
+    color: #fff;
+    border-radius: 12px 12px 4px 12px;
+    padding: 10px 14px;
+    font-size: 14px;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+/* Assistant messages - left aligned */
+.chat-msg.assistant {
+    align-self: flex-start;
+    align-items: flex-start;
+}
+
+.chat-msg.assistant .chat-label {
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    padding-left: 2px;
+}
+
+.chat-msg.assistant .chat-label.codex {
+    color: var(--color-yellow);
+}
+
+.chat-msg.assistant .chat-label.claude {
+    color: #b39ddb;
+}
+
+.chat-msg.assistant .chat-label.exec {
+    color: var(--color-cyan);
+}
+
+.chat-msg.assistant .chat-label.err {
+    color: var(--color-red);
+}
+
+/* ===================== Search Bar ===================== */
+.search-bar-wrap {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 6px 14px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+}
+
+.search-bar-wrap.visible {
+    display: flex;
+}
+
+.search-bar-input {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 5px 10px;
+    outline: none;
+}
+
+.search-bar-input:focus {
+    border-color: var(--color-accent);
+}
+
+.search-bar-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    min-width: 40px;
+}
+
+.search-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+}
+
+.chat-msg.search-hidden {
+    display: none !important;
+}
+
+.chat-msg .search-highlight {
+    background: rgba(255, 200, 0, 0.3);
+    border-radius: 2px;
+}
+
+.chat-msg.assistant .chat-bubble {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px 12px 12px 4px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.chat-msg.assistant .chat-bubble.thinking {
+    color: var(--color-yellow);
+}
+
+.chat-msg.assistant .chat-bubble.exec {
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 12px;
+    color: var(--color-cyan);
+    background: rgba(0, 188, 212, 0.06);
+    border-color: rgba(0, 188, 212, 0.2);
+}
+
+.chat-msg.assistant .chat-bubble.output {
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 12px;
+    color: var(--color-green);
+    background: rgba(0, 255, 136, 0.04);
+    border-color: rgba(0, 255, 136, 0.15);
+    white-space: pre-wrap;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.chat-msg.assistant .chat-bubble.error {
+    color: var(--color-red);
+    background: rgba(255, 68, 68, 0.06);
+    border-color: rgba(255, 68, 68, 0.2);
+}
+
+/* System messages - centered */
+.chat-msg.system {
+    align-self: center;
+    align-items: center;
+    max-width: 90%;
+}
+
+.chat-msg.system .chat-bubble {
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-style: italic;
+    padding: 4px 12px;
+    border-radius: 8px;
+    border: none;
+}
+
+/* Chat timestamp */
+.chat-time {
+    font-size: 10px;
+    color: #555;
+    margin-top: 3px;
+    padding: 0 4px;
+}
+
+/* ===================== Input Area ===================== */
+.input-area {
+    height: var(--input-height);
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.input-field {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    color: var(--text-bright);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    padding: 10px 16px;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.input-field:focus {
+    border-color: var(--color-accent);
+}
+
+.input-field::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+.input-field:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.send-btn {
+    background: var(--color-accent);
+    border: none;
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 22px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.send-btn:hover {
+    background: #1a8ad4;
+}
+
+.send-btn:active {
+    background: #005f9e;
+}
+
+.send-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.stop-btn {
+    background: #c0392b;
+    border: none;
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    display: none;
+}
+
+.stop-btn:hover {
+    background: #e74c3c;
+}
+
+.stop-btn.visible {
+    display: block;
+}
+
+/* ===================== Animations ===================== */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===================== Reconnecting Banner ===================== */
+.reconnect-banner {
+    display: none;
+    background: rgba(255, 68, 68, 0.15);
+    border: 1px solid rgba(255, 68, 68, 0.3);
+    color: var(--color-red);
+    font-size: 12px;
+    text-align: center;
+    padding: 6px 16px;
+    flex-shrink: 0;
+}
+
+.reconnect-banner.visible {
+    display: block;
+}
+
+/* ===================== Log Viewer Panel ===================== */
+.log-toggle-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-left: 10px;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+
+.log-toggle-btn:hover {
+    border-color: #666;
+    color: var(--text-primary);
+}
+
+.log-toggle-btn.active {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: #fff;
+}
+
+.log-panel {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 45vh;
+    background: #1a1a1a;
+    border-top: 2px solid var(--color-accent);
+    z-index: 200;
+    flex-direction: column;
+}
+
+.log-panel.visible {
+    display: flex;
+}
+
+.log-panel-header {
+    height: 36px;
+    background: #222;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.log-panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.log-panel-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.log-panel-actions button {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.log-panel-actions button:hover {
+    border-color: #666;
+    color: var(--text-primary);
+}
+
+.log-panel-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.log-panel-close:hover {
+    color: var(--color-red);
+}
+
+.log-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px;
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.log-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.log-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.log-content::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 3px;
+}
+
+.log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding: 1px 0;
+}
+
+.log-line .log-ts {
+    color: #666;
+}
+
+.log-line .log-level-INFO {
+    color: var(--color-green);
+}
+
+.log-line .log-level-WARNING {
+    color: var(--color-yellow);
+}
+
+.log-line .log-level-ERROR {
+    color: var(--color-red);
+}
+
+.log-line .log-level-DEBUG {
+    color: #777;
+}
+
+.log-line .log-name {
+    color: var(--color-cyan);
+}
+
+.log-line .log-msg {
+    color: #bbb;
+}
+
+.log-filter {
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 11px;
+    padding: 2px 8px;
+    width: 120px;
+    outline: none;
+}
+
+.log-filter:focus {
+    border-color: var(--color-accent);
+}
+
+/* ===================== Mobile Back Button ===================== */
+.back-btn {
+    display: none;
+    background: transparent;
+    border: none;
+    color: var(--color-accent);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 8px;
+    margin-right: 4px;
+    flex-shrink: 0;
+}
+
+/* Mobile topbar menu button */
+.topbar-back {
+    display: none;
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--color-accent);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-right: 8px;
+    flex-shrink: 0;
+}
+
+.topbar-back:active {
+    background: var(--bg-hover);
+}
+
+/* ===================== Mobile Responsive ===================== */
+@media (max-width: 768px) {
+    :root {
+        --topbar-height: 44px;
+        --input-height: 50px;
+    }
+
+    .topbar {
+        padding: 0 12px;
+    }
+
+    .topbar-title {
+        font-size: 14px;
+    }
+
+    .layout {
+        position: relative;
+    }
+
+    /* Sidebar: full width, toggled */
+    .sidebar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        min-width: 100%;
+        z-index: 10;
+        transition: transform 0.25s ease;
+    }
+
+    .sidebar.hidden {
+        transform: translateX(-100%);
+        pointer-events: none;
+    }
+
+    /* Main area: always full width */
+    .main-area {
+        width: 100%;
+    }
+
+    /* Show back button on mobile */
+    .back-btn {
+        display: inline-block;
+    }
+
+    .topbar-back {
+        display: inline-block;
+    }
+
+    /* Chat header compact */
+    .chat-header {
+        height: 38px;
+        padding: 0 10px;
+        gap: 6px;
+    }
+
+    .chat-header-device {
+        font-size: 13px;
+    }
+
+    /* Chat area */
+    .chat-area {
+        padding: 10px 12px;
+        gap: 10px;
+    }
+
+    .chat-msg {
+        max-width: 88%;
+    }
+
+    .chat-msg.user .chat-bubble {
+        font-size: 14px;
+        padding: 8px 12px;
+    }
+
+    .chat-msg.assistant .chat-bubble {
+        font-size: 13px;
+        padding: 8px 12px;
+    }
+
+    .chat-msg.assistant .chat-bubble.output {
+        max-height: 200px;
+        font-size: 11px;
+    }
+
+    /* Input area */
+    .input-area {
+        padding: 0 8px;
+        gap: 8px;
+    }
+
+    .input-field {
+        font-size: 16px;
+        padding: 8px 14px;
+    }
+
+    .send-btn {
+        padding: 8px 16px;
+        font-size: 13px;
+    }
+
+    /* Device cards */
+    .device-card {
+        padding: 10px 12px;
+    }
+
+    .device-code {
+        font-size: 16px;
+    }
+
+    /* Welcome text */
+    .chat-welcome .logo {
+        font-size: 16px;
+    }
+
+    .chat-welcome {
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 380px) {
+    .send-btn {
+        padding: 8px 12px;
+    }
+
+    .input-field {
+        padding: 8px 10px;
+    }
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== Auth Overlay ==================== -->
+<div id="authOverlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;">
+    <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;padding:32px;width:340px;text-align:center;">
+        <h2 style="color:var(--text-bright);margin-bottom:8px;font-size:18px;">Remote Deploy</h2>
+        <p style="color:var(--text-secondary);margin-bottom:20px;font-size:13px;">请输入 Google 验证码</p>
+        <input type="text" id="authTokenInput" placeholder="6位验证码" maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code"
+            style="width:100%;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border-color);border-radius:6px;color:var(--text-bright);font-size:24px;outline:none;margin-bottom:12px;text-align:center;letter-spacing:8px;font-family:monospace;">
+        <div id="authError" style="color:var(--color-red);font-size:12px;margin-bottom:12px;display:none;"></div>
+        <button id="authSubmitBtn"
+            style="width:100%;padding:10px;background:var(--color-accent);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;">验证</button>
+    </div>
+</div>
+
+<!-- ==================== Top Bar ==================== -->
+<div class="topbar">
+    <div style="display:flex;align-items:center;">
+        <button class="topbar-back" id="topbarBack">&#9776; 设备</button>
+        <div class="topbar-title"><span>Remote</span> Deploy</div>
+    </div>
+    <div style="display:flex;align-items:center;">
+        <div class="connection-status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">连接中...</span>
+        </div>
+        <button class="log-toggle-btn" id="logToggleBtn">LOG</button>
+    </div>
+</div>
+
+<!-- ==================== Layout ==================== -->
+<div class="layout">
+
+    <!-- ==================== Sidebar ==================== -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <span>设备列表</span>
+            <span class="device-count" id="deviceCount">0</span>
+        </div>
+        <div class="device-list" id="deviceList">
+            <div class="device-empty" id="deviceEmpty">
+                <div class="device-empty-icon">&#9633;</div>
+                <div class="device-empty-text">
+                    暂无设备连接<br>
+                    等待客户端上线...
+                </div>
+            </div>
+        </div>
+        <div class="sidebar-downloads">
+            <div class="sidebar-downloads-title">Download Client</div>
+            <div class="sidebar-downloads-btns">
+                <a href="/deploy/static/dist/远程部署客户端.exe" class="dl-btn dl-win" download>Windows</a>
+                <a href="/deploy/static/mac/远程部署客户端.command" class="dl-btn dl-mac" download>Mac</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== Main Area ==================== -->
+    <div class="main-area">
+        <div class="chat-header">
+            <button class="back-btn" id="backBtn">&lt; 返回</button>
+            <span class="chat-header-device" id="chatDevice">未选择设备</span>
+            <span class="chat-header-nick" id="chatNick"></span>
+            <select class="model-select" id="modelSelect">
+                <option value="codex">⚡ Codex</option>
+                <option value="claude">✨ Claude claude-sonnet-4-6</option>
+            </select>
+            <span class="codex-status" id="codexStatus"><span class="spinner"></span><span id="codexStatusText"></span></span>
+            <button class="clear-btn" id="searchToggleBtn" title="搜索聊天记录">🔍</button>
+            <button class="clear-btn" id="clearBtn" title="清空当前会话">清空</button>
+        </div>
+
+        <div class="search-bar-wrap" id="searchBarWrap">
+            <input type="text" class="search-bar-input" id="searchInput" placeholder="搜索聊天记录..." autocomplete="off" />
+            <span class="search-bar-count" id="searchCount"></span>
+            <button class="search-close-btn" id="searchCloseBtn">✕</button>
+        </div>
+
+        <div class="reconnect-banner" id="reconnectBanner">
+            WebSocket 已断开，正在尝试重新连接...
+        </div>
+
+        <div class="content-body">
+            <div class="chat-area" id="chatArea">
+                <div class="chat-welcome" id="chatWelcome">
+                    <div class="logo">远程部署控制台</div>
+                    <div>从左侧选择一个设备开始对话</div>
+                    <div class="hint">输入自然语言指令，Codex AI 会自动执行</div>
+                </div>
+            </div>
+
+            <div class="task-panel" id="taskPanel">
+                <div class="task-panel-header">任务进度</div>
+                <div class="task-panel-body" id="taskPanelBody">
+                    <div class="task-panel-empty" id="taskPanelEmpty">等待指令...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <input
+                type="text"
+                class="input-field"
+                id="inputField"
+                placeholder="输入指令，例如：帮他安装 openclaw..."
+                autocomplete="off"
+                spellcheck="false"
+                disabled
+            />
+            <button class="send-btn" id="sendBtn" disabled>发送</button>
+            <button class="stop-btn" id="stopBtn">⛔ 停止</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== Log Panel ==================== -->
+<div class="log-panel" id="logPanel">
+    <div class="log-panel-header">
+        <span class="log-panel-title">Server Logs</span>
+        <div class="log-panel-actions">
+            <input type="text" class="log-filter" id="logFilter" placeholder="Filter..." />
+            <button id="logClearBtn">Clear</button>
+            <button id="logScrollBtn">Auto-scroll</button>
+            <span class="log-panel-close" id="logCloseBtn">&times;</span>
+        </div>
+    </div>
+    <div class="log-content" id="logContent"></div>
+</div>
+
+<!-- ==================== JavaScript ==================== -->
+<script>
+(function () {
+    "use strict";
+
+    // ----------- DOM refs -----------
+    var statusDot = document.getElementById("statusDot");
+    var statusText = document.getElementById("statusText");
+    var deviceList = document.getElementById("deviceList");
+    var deviceEmpty = document.getElementById("deviceEmpty");
+    var deviceCount = document.getElementById("deviceCount");
+    var chatArea = document.getElementById("chatArea");
+    var chatWelcome = document.getElementById("chatWelcome");
+    var chatDevice = document.getElementById("chatDevice");
+    var chatNick = document.getElementById("chatNick");
+    var inputField = document.getElementById("inputField");
+    var sendBtn = document.getElementById("sendBtn");
+    var stopBtn = document.getElementById("stopBtn");
+    var clearBtn = document.getElementById("clearBtn");
+    var searchToggleBtn = document.getElementById("searchToggleBtn");
+    var searchBarWrap = document.getElementById("searchBarWrap");
+    var searchInput = document.getElementById("searchInput");
+    var searchCount = document.getElementById("searchCount");
+    var searchCloseBtn = document.getElementById("searchCloseBtn");
+    var reconnectBanner = document.getElementById("reconnectBanner");
+    var backBtn = document.getElementById("backBtn");
+    var topbarBack = document.getElementById("topbarBack");
+    var taskPanelBody = document.getElementById("taskPanelBody");
+    var sidebar = document.querySelector(".sidebar");
+    var logToggleBtn = document.getElementById("logToggleBtn");
+    var logPanel = document.getElementById("logPanel");
+    var logContent = document.getElementById("logContent");
+    var logClearBtn = document.getElementById("logClearBtn");
+    var logScrollBtn = document.getElementById("logScrollBtn");
+    var logCloseBtn = document.getElementById("logCloseBtn");
+    var logFilter = document.getElementById("logFilter");
+
+    // ----------- State -----------
+    var ws = null;
+    var selectedCode = null;
+    var deviceData = [];
+    var reconnectTimer = null;
+    var isConnected = false;
+    var _deviceBusy = {};    // code -> bool, whether AI is running for that device
+    var _deviceModel = {};   // code -> "codex"|"claude", last used model per device
+    var logAutoScroll = true;
+    var logFilterText = "";
+    // Task panel state
+    var _taskCurrentRoundEl = null;
+    var _taskRoundCount = 0;
+    var _taskLastCmdStepEl = null;  // track last cmd step to update exit code
+    var authToken = "";
+    var sessionToken = localStorage.getItem("deploy_session") || "";
+    var lastSeq = 0; // tracks last seen server message sequence for dedup
+    var lastPongTime = Date.now(); // track last pong for dead connection detection
+    var authOverlay = document.getElementById("authOverlay");
+    var authTokenInput = document.getElementById("authTokenInput");
+    var authSubmitBtn = document.getElementById("authSubmitBtn");
+    var authError = document.getElementById("authError");
+
+    // If we have a stored session, hide overlay and auto-connect
+    if (sessionToken) {
+        authOverlay.style.display = "none";
+    }
+
+    authSubmitBtn.addEventListener("click", doAuth);
+    authTokenInput.addEventListener("keydown", function(e) {
+        if (e.key === "Enter") doAuth();
+    });
+    // Only allow digits in TOTP input
+    authTokenInput.addEventListener("input", function() {
+        this.value = this.value.replace(/[^0-9]/g, "");
+    });
+
+    function doAuth() {
+        authToken = authTokenInput.value.trim();
+        if (!authToken || authToken.length !== 6) {
+            authError.textContent = "请输入6位验证码";
+            authError.style.display = "block";
+            return;
+        }
+        authError.style.display = "none";
+        connect();
+    }
+
+    // Per-device message storage: { code: [{type, text, time}] }
+    var deviceMessages = {};
+
+    // ----------- Chat history persistence (localStorage) -----------
+    var STORAGE_KEY = "deploy_chat_history";
+
+    function saveHistory() {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(deviceMessages));
+        } catch(e) { /* quota exceeded, ignore */ }
+    }
+
+    function loadHistory() {
+        try {
+            var stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                deviceMessages = JSON.parse(stored);
+            }
+        } catch(e) { deviceMessages = {}; }
+    }
+
+    // Load on startup
+    loadHistory();
+
+    // ----------- Nickname storage (localStorage) -----------
+    function getNicknames() {
+        try { return JSON.parse(localStorage.getItem("deploy_nicknames") || "{}"); } catch(e) { return {}; }
+    }
+    function setNickname(code, name) {
+        var nicks = getNicknames();
+        if (name) { nicks[code] = name; } else { delete nicks[code]; }
+        localStorage.setItem("deploy_nicknames", JSON.stringify(nicks));
+    }
+    function getNickname(code) {
+        return getNicknames()[code] || "";
+    }
+    function promptNickname(code) {
+        var current = getNickname(code);
+        var name = prompt("设置备注名称 (" + code + "):", current);
+        if (name !== null) {
+            setNickname(code, name.trim());
+            renderDevices();
+            // Update header if this is the selected device
+            if (code === selectedCode) {
+                updateChatHeader(code);
+            }
+        }
+    }
+
+    // ----------- Helpers -----------
+    function getTimestamp() {
+        var now = new Date();
+        return padZero(now.getHours()) + ":" + padZero(now.getMinutes()) + ":" + padZero(now.getSeconds());
+    }
+
+    function padZero(n) {
+        return n < 10 ? "0" + n : "" + n;
+    }
+
+    function escapeHtml(str) {
+        var div = document.createElement("div");
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function scrollToBottom() {
+        requestAnimationFrame(function () {
+            chatArea.scrollTop = chatArea.scrollHeight;
+        });
+    }
+
+    // ----------- Task Panel -----------
+    function clearTaskPanel() {
+        taskPanelBody.innerHTML = '<div class="task-panel-empty" id="taskPanelEmpty">等待指令...</div>';
+        _taskCurrentRoundEl = null;
+        _taskRoundCount = 0;
+        _taskLastCmdStepEl = null;
+    }
+
+    function _taskNewRound() {
+        _taskRoundCount++;
+        var empty = document.getElementById("taskPanelEmpty");
+        if (empty) empty.remove();
+        if (_taskCurrentRoundEl) {
+            var div = document.createElement("div");
+            div.className = "task-panel-divider";
+            taskPanelBody.appendChild(div);
+        }
+        _taskCurrentRoundEl = document.createElement("div");
+        _taskCurrentRoundEl.className = "task-round";
+        taskPanelBody.appendChild(_taskCurrentRoundEl);
+    }
+
+    function addTaskStep(cssClass, icon, text) {
+        if (!taskPanelBody) return;
+        var empty = document.getElementById("taskPanelEmpty");
+        if (empty) empty.remove();
+        if (!_taskCurrentRoundEl) _taskNewRound();
+        var step = document.createElement("div");
+        step.className = "task-step " + cssClass;
+        step.innerHTML = '<span class="task-step-icon">' + icon + '</span><span class="task-step-text">' + escapeHtml(text) + '</span>';
+        _taskCurrentRoundEl.appendChild(step);
+        taskPanelBody.scrollTop = taskPanelBody.scrollHeight;
+        return step;
+    }
+
+    function updateLastTaskStep(cssClass, icon, text) {
+        if (!_taskCurrentRoundEl) return addTaskStep(cssClass, icon, text);
+        var steps = _taskCurrentRoundEl.querySelectorAll(".task-step");
+        var last = steps[steps.length - 1];
+        if (last && last.classList.contains(cssClass.split(" ")[0])) {
+            last.querySelector(".task-step-text").textContent = text;
+            taskPanelBody.scrollTop = taskPanelBody.scrollHeight;
+            return last;
+        }
+        return addTaskStep(cssClass, icon, text);
+    }
+
+    function isMobile() {
+        return window.innerWidth <= 768;
+    }
+
+    // ----------- WebSocket -----------
+    function buildWsUrl() {
+        var proto = location.protocol === "https:" ? "wss:" : "ws:";
+        return proto + "//" + location.host + "/deploy/ws/admin";
+    }
+
+    function connect() {
+        if (!authToken && !sessionToken) {
+            authOverlay.style.display = "flex";
+            authTokenInput.focus();
+            return;
+        }
+        if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+            return;
+        }
+
+        try {
+            ws = new WebSocket(buildWsUrl());
+        } catch (e) {
+            scheduleReconnect();
+            return;
+        }
+
+        ws.onopen = function () {
+            // Send auth: prefer session token for reconnect, fallback to TOTP
+            if (sessionToken) {
+                ws.send(JSON.stringify({ type: "auth", session: sessionToken, last_seq: lastSeq }));
+            } else {
+                ws.send(JSON.stringify({ type: "auth", token: authToken, last_seq: lastSeq }));
+            }
+        };
+
+        ws.onclose = function () {
+            isConnected = false;
+            statusDot.classList.remove("connected");
+            statusText.textContent = "已断开";
+            reconnectBanner.classList.add("visible");
+            // If we have a session token, auto-reconnect silently
+            if (sessionToken) {
+                scheduleReconnect();
+            } else {
+                authOverlay.style.display = "flex";
+                authTokenInput.value = "";
+                authTokenInput.focus();
+            }
+        };
+
+        ws.onerror = function () {};
+
+        ws.onmessage = function (evt) {
+            var msg;
+            try { msg = JSON.parse(evt.data); } catch (e) { return; }
+            // Handle ping/pong at transport level (before handleMessage)
+            if (msg.type === "ping") {
+                sendMessage({ type: "pong" });
+                return;
+            }
+            if (msg.type === "pong") {
+                lastPongTime = Date.now();
+                return;
+            }
+            lastPongTime = Date.now(); // any message counts as alive
+            handleMessage(msg);
+        };
+    }
+
+    function scheduleReconnect() {
+        clearReconnectTimer();
+        reconnectTimer = setTimeout(function () { connect(); }, 3000);
+    }
+
+    function clearReconnectTimer() {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    }
+
+    function sendMessage(obj) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(obj));
+        }
+    }
+
+    // ----------- Message handler -----------
+    function handleMessage(msg) {
+        var type = msg.type;
+
+        // Track server message sequence for dedup on reconnect
+        if (msg._seq) {
+            if (msg._seq <= lastSeq) {
+                return; // already seen this message, skip
+            }
+            lastSeq = msg._seq;
+        }
+
+        // --- Auth responses ---
+        if (type === "auth_ok") {
+            isConnected = true;
+            // Store session token for reconnects
+            if (msg.session) {
+                sessionToken = msg.session;
+                localStorage.setItem("deploy_session", sessionToken);
+            }
+            authOverlay.style.display = "none";
+            statusDot.classList.add("connected");
+            statusText.textContent = "已连接";
+            reconnectBanner.classList.remove("visible");
+            clearReconnectTimer();
+            return;
+        }
+        if (type === "auth_failed") {
+            authToken = "";
+            sessionToken = "";
+            localStorage.removeItem("deploy_session");
+            authOverlay.style.display = "flex";
+            authError.textContent = msg.msg || "验证码无效或已过期";
+            authError.style.display = "block";
+            authTokenInput.value = "";
+            authTokenInput.focus();
+            try { ws.close(); } catch(e) {}
+            return;
+        }
+
+        if (type === "devices") {
+            deviceData = msg.list || [];
+            // Migrate chat history: if a hostname has history under an old code,
+            // move it to the current code for that hostname
+            migrateHistory(deviceData);
+            renderDevices();
+            return;
+        }
+
+        var code = msg.code;
+
+        if (type === "status") {
+            var statusEl = document.getElementById("codexStatus");
+            var codexStatusText = document.getElementById("codexStatusText");
+            var state = msg.state || "idle";
+            // Track busy state per device regardless of which is selected
+            _deviceBusy[msg.code] = !(state === "idle" || state === "done");
+
+            if (msg.code === selectedCode) {
+                if (state === "idle" || state === "done") {
+                    statusEl.className = "codex-status";
+                    stopBtn.classList.remove("visible");
+                    // 移除聊天内状态气泡
+                    var existingBubble = document.getElementById("chatLiveStatus");
+                    if (existingBubble) existingBubble.remove();
+                } else {
+                    var stateLabel;
+                    if (state === "calling_api") {
+                        stateLabel = "正在调用 AI...";
+                        // 任务面板：每次 calling_api 开一个新 round
+                        _taskNewRound();
+                        addTaskStep("step-calling", "⟳", "正在调用 AI...");
+                    } else if (state === "thinking") {
+                        stateLabel = "AI 分析结果中...";
+                        updateLastTaskStep("step-calling", "⟳", "AI 分析结果中...");
+                    } else if (state === "executing") {
+                        stateLabel = "准备执行命令...";
+                        addTaskStep("step-cmd", "⚙", "执行命令中...");
+                        _taskLastCmdStepEl = _taskCurrentRoundEl ? _taskCurrentRoundEl.querySelector(".task-step.step-cmd:last-child") : null;
+                    } else {
+                        stateLabel = state;
+                    }
+
+                    // 更新顶栏指示器
+                    statusEl.className = "codex-status active";
+                    stopBtn.classList.add("visible");
+                    codexStatusText.textContent = stateLabel;
+
+                    // 更新或创建聊天内状态气泡
+                    var liveBubble = document.getElementById("chatLiveStatus");
+                    if (!liveBubble) {
+                        if (chatWelcome && chatWelcome.parentNode === chatArea) chatWelcome.remove();
+                        liveBubble = document.createElement("div");
+                        liveBubble.id = "chatLiveStatus";
+                        liveBubble.className = "chat-live-status";
+                        liveBubble.innerHTML = '<div class="live-status-dots"><span></span><span></span><span></span></div><span id="chatLiveStatusText"></span>';
+                        chatArea.appendChild(liveBubble);
+                    }
+                    document.getElementById("chatLiveStatusText").textContent = stateLabel;
+                    scrollToBottom();
+                }
+            }
+            return;
+        }
+
+        if (type === "output") {
+            var data = msg.data || "";
+            // 过滤高频刷屏噪音（OpenClaw ws连接重试、npm warn等）
+            var trimmed = data.trim();
+            if (trimmed.match(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z \[ws\] (closed before connect|unable to connect)/)) return;
+            if (trimmed.match(/^npm warn/i)) return;
+            if (data.indexOf("$ ") === 0) {
+                storeAndRender("exec", data.trimEnd(), code);
+                // 任务面板：更新 cmd 步骤显示实际命令
+                if (code === selectedCode && _taskLastCmdStepEl) {
+                    _taskLastCmdStepEl.querySelector(".task-step-text").textContent = data.trimEnd();
+                    taskPanelBody.scrollTop = taskPanelBody.scrollHeight;
+                }
+            } else {
+                storeAndRender("output", data.trimEnd(), code);
+            }
+            return;
+        }
+
+        if (type === "codex") {
+            var thinking = msg.thinking || "";
+            storeAndRender("codex", thinking, code);
+            // 任务面板：显示 AI 思路（截断显示）
+            if (code === selectedCode) {
+                var shortThinking = thinking.length > 60 ? thinking.slice(0, 60) + "…" : thinking;
+                addTaskStep("step-thinking", "💭", shortThinking);
+            }
+            return;
+        }
+
+        if (type === "log") {
+            var logMsg = msg.msg || "";
+            if (logMsg.indexOf("Instruction received:") === 0) return;
+            storeAndRender("exec", logMsg, code);
+            // 任务面板：命令完成时更新步骤
+            if (code === selectedCode && logMsg.indexOf("Command completed") === 0) {
+                var exitMatch = logMsg.match(/exit_code=(-?\d+)/);
+                var exitCode = exitMatch ? exitMatch[1] : "?";
+                var ok = exitCode === "0";
+                addTaskStep(ok ? "step-done" : "step-error", ok ? "✓" : "✗", "完成 exit=" + exitCode);
+                _taskLastCmdStepEl = null;
+            }
+            return;
+        }
+
+        if (type === "error") {
+            storeAndRender("error", msg.msg || "Unknown error", code);
+            if (msg.code === selectedCode) {
+                document.getElementById("codexStatus").className = "codex-status";
+                addTaskStep("step-error", "✗", msg.msg || "错误");
+            }
+            return;
+        }
+
+        if (type === "reply") {
+            storeAndRender("reply", msg.text || "", code);
+            if (msg.code === selectedCode) {
+                document.getElementById("codexStatus").className = "codex-status";
+                var shortReply = (msg.text || "").slice(0, 60);
+                if ((msg.text || "").length > 60) shortReply += "…";
+                addTaskStep("step-reply", "✅", shortReply);
+            }
+            return;
+        }
+
+        if (type === "server_log") {
+            appendLogEntry(msg.entry);
+            return;
+        }
+
+        if (type === "server_logs_bulk") {
+            var entries = msg.entries || [];
+            for (var li = 0; li < entries.length; li++) {
+                appendLogEntry(entries[li]);
+            }
+            return;
+        }
+    }
+
+    // ----------- Chat history migration (hostname-based) -----------
+    function migrateHistory(devices) {
+        // Build hostname -> current code mapping
+        var hostnameToCode = {};
+        for (var i = 0; i < devices.length; i++) {
+            var d = devices[i];
+            if (d.status === "online") {
+                hostnameToCode[d.hostname] = d.code;
+            }
+        }
+
+        // Check localStorage history for orphaned codes (same hostname, different code)
+        var changed = false;
+        var allCodes = Object.keys(deviceMessages);
+        for (var j = 0; j < allCodes.length; j++) {
+            var oldCode = allCodes[j];
+            var msgs = deviceMessages[oldCode];
+            if (!msgs || msgs.length === 0) continue;
+
+            // Find which hostname this old code belonged to
+            for (var k = 0; k < devices.length; k++) {
+                if (devices[k].code === oldCode) break; // still active, skip
+            }
+            if (k < devices.length) continue; // code still exists in device list
+
+            // Old code not in device list - check if any current device has same hostname
+            // We stored hostname in nicknames or need another approach
+            // Simpler: iterate current devices and see if any existing history code
+            // matches a device that was replaced
+        }
+
+        // Alternative simpler approach: when a device list arrives,
+        // if there's history for codes NOT in the current list, offer to keep them
+        // For now, just preserve all history - it won't be lost from localStorage
+        // The key scenario: same hostname gets new code.
+        // We handle this by also tracking hostname->code mapping
+        var hostnameMap = {};
+        try {
+            hostnameMap = JSON.parse(localStorage.getItem("deploy_hostname_map") || "{}");
+        } catch(e) { hostnameMap = {}; }
+
+        for (var h in hostnameToCode) {
+            var newCode = hostnameToCode[h];
+            var oldMappedCode = hostnameMap[h];
+
+            if (oldMappedCode && oldMappedCode !== newCode && deviceMessages[oldMappedCode]) {
+                // Migrate: prepend old messages to new code's history
+                ensureMessages(newCode);
+                var oldMsgs = deviceMessages[oldMappedCode];
+                deviceMessages[newCode] = oldMsgs.concat(deviceMessages[newCode]);
+                delete deviceMessages[oldMappedCode];
+                changed = true;
+
+                // Also migrate nickname
+                var oldNick = getNickname(oldMappedCode);
+                if (oldNick && !getNickname(newCode)) {
+                    setNickname(newCode, oldNick);
+                }
+
+                // If we were viewing the old code, auto-switch to new code
+                if (selectedCode === oldMappedCode) {
+                    selectedCode = newCode;
+                }
+            }
+
+            hostnameMap[h] = newCode;
+        }
+
+        localStorage.setItem("deploy_hostname_map", JSON.stringify(hostnameMap));
+        if (changed) saveHistory();
+    }
+
+    // ----------- Per-device message storage -----------
+    function ensureMessages(code) {
+        if (!deviceMessages[code]) {
+            deviceMessages[code] = [];
+        }
+    }
+
+    function storeAndRender(type, text, code, model) {
+        if (!code) return;
+
+        ensureMessages(code);
+        var entry = { type: type, text: text, time: getTimestamp(), model: model || _deviceModel[code] || "codex" };
+        deviceMessages[code].push(entry);
+
+        // Limit stored messages per device
+        if (deviceMessages[code].length > 500) {
+            deviceMessages[code] = deviceMessages[code].slice(-400);
+        }
+
+        // Persist to localStorage
+        saveHistory();
+
+        // Only render to DOM if this is the currently selected device
+        if (code === selectedCode) {
+            renderOneMessage(entry);
+            scrollToBottom();
+        }
+    }
+
+    // ----------- Chat rendering -----------
+    function renderOneMessage(entry) {
+        // Remove welcome if present
+        if (chatWelcome && chatWelcome.parentNode === chatArea) {
+            chatWelcome.remove();
+        }
+
+        // Remove live status bubble before adding real content
+        var liveBubble = document.getElementById("chatLiveStatus");
+        if (liveBubble) liveBubble.remove();
+
+        var msgEl = document.createElement("div");
+
+        if (entry.type === "user") {
+            // User message - right aligned
+            msgEl.className = "chat-msg user";
+            var bubble = document.createElement("div");
+            bubble.className = "chat-bubble";
+            bubble.textContent = entry.text;
+            msgEl.appendChild(bubble);
+        } else if (entry.type === "codex") {
+            // AI thinking - left aligned
+            msgEl.className = "chat-msg assistant";
+            var label = document.createElement("div");
+            var isClaude = entry.model === "claude";
+            label.className = "chat-label " + (isClaude ? "claude" : "codex");
+            label.textContent = isClaude ? "Claude" : "Codex";
+            var bubble = document.createElement("div");
+            bubble.className = "chat-bubble thinking";
+            bubble.textContent = entry.text;
+            msgEl.appendChild(label);
+            msgEl.appendChild(bubble);
+        } else if (entry.type === "exec") {
+            // Command execution / log
+            msgEl.className = "chat-msg assistant";
+            var label = document.createElement("div");
+            label.className = "chat-label exec";
+            label.textContent = "执行";
+            var bubble = document.createElement("div");
+            bubble.className = "chat-bubble exec";
+            bubble.textContent = entry.text;
+            msgEl.appendChild(label);
+            msgEl.appendChild(bubble);
+        } else if (entry.type === "output") {
+            // Command output
+            msgEl.className = "chat-msg assistant";
+            var bubble = document.createElement("div");
+            bubble.className = "chat-bubble output";
+            bubble.textContent = entry.text;
+            msgEl.appendChild(bubble);
+        } else if (entry.type === "error") {
+            // Error
+            msgEl.className = "chat-msg assistant";
+            var label = document.createElement("div");
+            label.className = "chat-label err";
+            label.textContent = "错误";
+            var bubble = document.createElement("div");
+            bubble.className = "chat-bubble error";
+            bubble.textContent = entry.text;
+            msgEl.appendChild(label);
+            msgEl.appendChild(bubble);
+        } else if (entry.type === "reply") {
+            // AI chat reply
+            msgEl.className = "chat-msg assistant";
+            var label = document.createElement("div");
+            var isClaude = entry.model === "claude";
+            label.className = "chat-label " + (isClaude ? "claude" : "codex");
+            label.textContent = isClaude ? "Claude" : "Codex";
+            var bubble = document.createElement("div");
+            bubble.className = "chat-bubble";
+            bubble.textContent = entry.text;
+            msgEl.appendChild(label);
+            msgEl.appendChild(bubble);
+        } else {
+            // System
+            msgEl.className = "chat-msg system";
+            var bubble = document.createElement("div");
+            bubble.className = "chat-bubble";
+            bubble.textContent = entry.text;
+            msgEl.appendChild(bubble);
+        }
+
+        // Timestamp
+        var timeEl = document.createElement("div");
+        timeEl.className = "chat-time";
+        timeEl.textContent = entry.time;
+        msgEl.appendChild(timeEl);
+
+        chatArea.appendChild(msgEl);
+    }
+
+    function renderTerminal(code) {
+        // Clear chat area
+        chatArea.innerHTML = "";
+
+        if (!code) {
+            // No device selected - show global welcome
+            var welcome = document.createElement("div");
+            welcome.className = "chat-welcome";
+            welcome.id = "chatWelcome";
+            welcome.innerHTML = '<div class="logo">远程部署控制台</div>'
+                + '<div>从左侧选择一个设备开始对话</div>'
+                + '<div class="hint">输入自然语言指令，Codex AI 会自动执行</div>';
+            chatArea.appendChild(welcome);
+            return;
+        }
+
+        var msgs = deviceMessages[code];
+        if (!msgs || msgs.length === 0) {
+            // Device selected but no messages yet
+            var nick = getNickname(code);
+            var welcome = document.createElement("div");
+            welcome.className = "chat-welcome";
+            welcome.innerHTML = '<div class="logo">会话: ' + escapeHtml(code) + (nick ? ' (' + escapeHtml(nick) + ')' : '') + '</div>'
+                + '<div>在下方输入指令开始对话</div>'
+                + '<div class="hint">例如: 帮他安装 openclaw、检查 node 版本、查看磁盘空间...</div>';
+            chatArea.appendChild(welcome);
+            return;
+        }
+
+        // Render all stored messages
+        for (var i = 0; i < msgs.length; i++) {
+            renderOneMessage(msgs[i]);
+        }
+        scrollToBottom();
+    }
+
+    // ----------- Chat header -----------
+    function updateChatHeader(code) {
+        if (code) {
+            chatDevice.textContent = code;
+            var nick = getNickname(code);
+            chatNick.textContent = nick ? "- " + nick : "";
+        } else {
+            chatDevice.textContent = "未选择设备";
+            chatNick.textContent = "";
+        }
+    }
+
+    // ----------- Device list rendering -----------
+    function renderDevices() {
+        var onlineCount = 0;
+        for (var i = 0; i < deviceData.length; i++) {
+            if (deviceData[i].status === "online") onlineCount++;
+        }
+        deviceCount.textContent = onlineCount + "/" + deviceData.length;
+
+        if (deviceData.length === 0) {
+            deviceList.innerHTML = "";
+            deviceList.appendChild(deviceEmpty);
+            deviceEmpty.style.display = "flex";
+            return;
+        }
+        deviceEmpty.style.display = "none";
+
+        var html = "";
+        for (var j = 0; j < deviceData.length; j++) {
+            var d = deviceData[j];
+            var isSelected = d.code === selectedCode;
+            var isOffline = d.status !== "online";
+
+            var cardClasses = "device-card";
+            if (isSelected) cardClasses += " selected";
+            if (isOffline) cardClasses += " offline";
+
+            var badgeClass = "device-status-badge " + (isOffline ? "offline" : "online");
+            var badgeText = isOffline ? "离线" : "在线";
+
+            var nick = getNickname(d.code);
+            var nickClass = nick ? "device-nickname" : "device-nickname empty";
+            var nickText = nick ? escapeHtml(nick) : "点击设置备注";
+
+            html += '<div class="' + cardClasses + '" data-code="' + escapeHtml(d.code) + '">';
+            html += '  <div class="device-card-header">';
+            html += '    <span class="device-code">' + escapeHtml(d.code) + '</span>';
+            html += '    <span class="' + badgeClass + '">' + badgeText + '</span>';
+            html += '  </div>';
+            html += '  <div class="' + nickClass + '" data-nick-code="' + escapeHtml(d.code) + '">' + nickText + '</div>';
+            html += '  <div class="device-info">';
+            html += '    <div class="device-info-row"><span class="label">OS</span><span class="value">' + escapeHtml(d.os || "Unknown") + '</span></div>';
+            html += '    <div class="device-info-row"><span class="label">Host</span><span class="value">' + escapeHtml(d.hostname || "Unknown") + '</span></div>';
+            if (d.arch) {
+                html += '    <div class="device-info-row"><span class="label">Arch</span><span class="value">' + escapeHtml(d.arch) + '</span></div>';
+            }
+            html += '  </div>';
+            html += '</div>';
+        }
+
+        deviceList.innerHTML = html;
+
+        // Attach click listeners
+        var cards = deviceList.querySelectorAll(".device-card");
+        for (var k = 0; k < cards.length; k++) {
+            cards[k].addEventListener("click", onCardClick);
+        }
+        var nickEls = deviceList.querySelectorAll(".device-nickname");
+        for (var n = 0; n < nickEls.length; n++) {
+            nickEls[n].addEventListener("click", function(e) {
+                e.stopPropagation();
+                promptNickname(e.currentTarget.getAttribute("data-nick-code"));
+            });
+        }
+
+        // If selected device gone, try to find same hostname with new code
+        if (selectedCode) {
+            var found = false;
+            var selectedHostname = null;
+            for (var m = 0; m < deviceData.length; m++) {
+                if (deviceData[m].code === selectedCode) { found = true; break; }
+            }
+            if (!found) {
+                // Look up hostname from our mapping
+                var hMap = {};
+                try { hMap = JSON.parse(localStorage.getItem("deploy_hostname_map") || "{}"); } catch(e) {}
+                for (var hh in hMap) {
+                    if (hMap[hh] === selectedCode) { selectedHostname = hh; break; }
+                }
+                // Find new code for same hostname
+                var newCode = null;
+                if (selectedHostname) {
+                    for (var mm = 0; mm < deviceData.length; mm++) {
+                        if (deviceData[mm].hostname === selectedHostname && deviceData[mm].status === "online") {
+                            newCode = deviceData[mm].code;
+                            break;
+                        }
+                    }
+                }
+                if (newCode) {
+                    // Auto-switch to new code for same device
+                    selectedCode = newCode;
+                    updateChatHeader(newCode);
+                    renderTerminal(newCode);
+                    inputField.placeholder = "跟 " + newCode + " 说点什么...";
+                } else {
+                    selectDevice(null);
+                }
+            }
+        }
+    }
+
+    function onCardClick(e) {
+        selectDevice(e.currentTarget.getAttribute("data-code"));
+    }
+
+    function selectDevice(code) {
+        selectedCode = code;
+        updateChatHeader(code);
+
+        // Close search when switching devices
+        closeSearch();
+
+        if (code) {
+            inputField.disabled = false;
+            sendBtn.disabled = false;
+            var nick = getNickname(code);
+            inputField.placeholder = "跟 " + code + (nick ? " (" + nick + ")" : "") + " 说点什么...";
+            // Update stop button for this device's running state
+            if (_deviceBusy[code]) {
+                stopBtn.classList.add("visible");
+            } else {
+                stopBtn.classList.remove("visible");
+            }
+            if (isMobile()) {
+                sidebar.classList.add("hidden");
+            }
+            inputField.focus();
+        } else {
+            inputField.disabled = true;
+            sendBtn.disabled = true;
+            stopBtn.classList.remove("visible");
+            inputField.placeholder = "请先选择一个设备...";
+            if (isMobile()) {
+                sidebar.classList.remove("hidden");
+            }
+        }
+
+        // Render this device's chat history (isolated)
+        renderTerminal(code);
+
+        // Re-render sidebar for selection highlight
+        renderDevices();
+    }
+
+    // ----------- Input handling -----------
+    function sendInstruction() {
+        var text = inputField.value.trim();
+        if (!text || !selectedCode) return;
+
+        // Check WebSocket connection
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            storeAndRender("error", "连接已断开，正在重连...", selectedCode);
+            connect();
+            return;
+        }
+
+        // Send to server
+        var chosenModel = document.getElementById("modelSelect").value;
+        _deviceModel[selectedCode] = chosenModel;
+        sendMessage({
+            type: "instruction",
+            code: selectedCode,
+            text: text,
+            model: chosenModel,
+        });
+
+        // 清空任务面板，显示新指令
+        clearTaskPanel();
+        addTaskStep("step-instruction", "▶", text.length > 40 ? text.slice(0, 40) + "…" : text);
+
+        // Store as user message
+        ensureMessages(selectedCode);
+        var entry = { type: "user", text: text, time: getTimestamp() };
+        deviceMessages[selectedCode].push(entry);
+        renderOneMessage(entry);
+        scrollToBottom();
+        saveHistory();
+
+        inputField.value = "";
+        inputField.focus();
+    }
+
+    sendBtn.addEventListener("click", function () {
+        sendInstruction();
+    });
+
+    stopBtn.addEventListener("click", function () {
+        if (!selectedCode || !ws || ws.readyState !== WebSocket.OPEN) return;
+        sendMessage({ type: "cancel", code: selectedCode });
+        stopBtn.classList.remove("visible");
+        _deviceBusy[selectedCode] = false;
+    });
+
+    // ----------- Search -----------
+    function closeSearch() {
+        searchBarWrap.classList.remove("visible");
+        searchInput.value = "";
+        searchCount.textContent = "";
+        // Show all messages
+        var msgs = chatArea.querySelectorAll(".chat-msg");
+        for (var i = 0; i < msgs.length; i++) {
+            msgs[i].classList.remove("search-hidden");
+        }
+    }
+
+    function doSearch() {
+        var q = searchInput.value.trim().toLowerCase();
+        var msgs = chatArea.querySelectorAll(".chat-msg");
+        if (!q) {
+            for (var i = 0; i < msgs.length; i++) msgs[i].classList.remove("search-hidden");
+            searchCount.textContent = "";
+            return;
+        }
+        var matched = 0;
+        for (var i = 0; i < msgs.length; i++) {
+            var text = msgs[i].textContent.toLowerCase();
+            if (text.indexOf(q) !== -1) {
+                msgs[i].classList.remove("search-hidden");
+                matched++;
+            } else {
+                msgs[i].classList.add("search-hidden");
+            }
+        }
+        searchCount.textContent = matched + " 条";
+    }
+
+    searchToggleBtn.addEventListener("click", function () {
+        if (searchBarWrap.classList.contains("visible")) {
+            closeSearch();
+        } else {
+            searchBarWrap.classList.add("visible");
+            searchInput.focus();
+        }
+    });
+
+    searchCloseBtn.addEventListener("click", closeSearch);
+
+    searchInput.addEventListener("input", doSearch);
+
+    searchInput.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeSearch();
+    });
+
+    inputField.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            sendInstruction();
+        }
+    });
+
+    clearBtn.addEventListener("click", function () {
+        if (selectedCode) {
+            deviceMessages[selectedCode] = [];
+            saveHistory();
+            renderTerminal(selectedCode);
+        }
+    });
+
+    backBtn.addEventListener("click", function () {
+        sidebar.classList.remove("hidden");
+    });
+
+    topbarBack.addEventListener("click", function () {
+        sidebar.classList.remove("hidden");
+    });
+
+    // ----------- Log Panel -----------
+    function appendLogEntry(entry) {
+        if (!entry) return;
+        var line = document.createElement("div");
+        line.className = "log-line";
+
+        var ts = '<span class="log-ts">' + escapeHtml(entry.ts || "") + '</span> ';
+        var level = '<span class="log-level-' + escapeHtml(entry.level || "INFO") + '">' + escapeHtml(entry.level || "?") + '</span> ';
+        var name = '<span class="log-name">[' + escapeHtml(entry.name || "") + ']</span> ';
+        var msg = '<span class="log-msg">' + escapeHtml(entry.msg || "") + '</span>';
+
+        line.innerHTML = ts + level + name + msg;
+
+        // Apply filter
+        if (logFilterText && line.textContent.toLowerCase().indexOf(logFilterText) === -1) {
+            line.style.display = "none";
+        }
+
+        logContent.appendChild(line);
+
+        // Keep max 1000 lines in DOM
+        while (logContent.children.length > 1000) {
+            logContent.removeChild(logContent.firstChild);
+        }
+
+        if (logAutoScroll) {
+            logContent.scrollTop = logContent.scrollHeight;
+        }
+    }
+
+    function toggleLogPanel() {
+        var visible = logPanel.classList.toggle("visible");
+        logToggleBtn.classList.toggle("active", visible);
+    }
+
+    logToggleBtn.addEventListener("click", toggleLogPanel);
+
+    logCloseBtn.addEventListener("click", function () {
+        logPanel.classList.remove("visible");
+        logToggleBtn.classList.remove("active");
+    });
+
+    logClearBtn.addEventListener("click", function () {
+        logContent.innerHTML = "";
+    });
+
+    logScrollBtn.addEventListener("click", function () {
+        logAutoScroll = !logAutoScroll;
+        logScrollBtn.textContent = logAutoScroll ? "Auto-scroll" : "Paused";
+        logScrollBtn.style.color = logAutoScroll ? "" : "var(--color-yellow)";
+        if (logAutoScroll) {
+            logContent.scrollTop = logContent.scrollHeight;
+        }
+    });
+
+    logFilter.addEventListener("input", function () {
+        logFilterText = logFilter.value.toLowerCase();
+        var lines = logContent.querySelectorAll(".log-line");
+        for (var i = 0; i < lines.length; i++) {
+            if (!logFilterText || lines[i].textContent.toLowerCase().indexOf(logFilterText) !== -1) {
+                lines[i].style.display = "";
+            } else {
+                lines[i].style.display = "none";
+            }
+        }
+    });
+
+    // ----------- Heartbeat with dead connection detection -----------
+    setInterval(function () {
+        if (isConnected) {
+            // If no pong/message received in 45 seconds, connection is dead
+            if (Date.now() - lastPongTime > 45000) {
+                console.warn("No response in 45s, reconnecting...");
+                try { ws.close(); } catch(e) {}
+                isConnected = false;
+                scheduleReconnect();
+                return;
+            }
+            sendMessage({ type: "ping" });
+        }
+    }, 15000); // ping every 15 seconds (was 30)
+
+    // ----------- Model selector persistence -----------
+    var modelSelect = document.getElementById("modelSelect");
+    var savedModel = localStorage.getItem("deployModel") || "claude";
+    if (modelSelect) modelSelect.value = savedModel;
+    if (modelSelect) modelSelect.addEventListener("change", function () {
+        localStorage.setItem("deployModel", this.value);
+    });
+
+    // ----------- Init -----------
+    connect();
+
+})();
+</script>
+</body>
+</html>
