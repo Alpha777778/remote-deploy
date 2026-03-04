@@ -46,6 +46,9 @@ Rules:
 - If the request is truly ambiguous or risky, use "reply" to ask ONE clarifying question.
 - ALWAYS reply in Chinese (简体中文). Never reply in English.
 - If the user says something vague like "怎么样" or "继续", refer to history and continue.
+- When downloading files with curl, ALWAYS add --no-progress-meter or -s flag to suppress progress. Example: curl -fsSL url -o file
+- When using wget, ALWAYS add -q flag to suppress progress. Example: wget -q url -O file
+- When using pip/npm/apt, they handle progress themselves; do not add extra flags.
 [END DIRECTIVE]"""
 
 # ---------------------------------------------------------------------------

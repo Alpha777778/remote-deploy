@@ -14,6 +14,7 @@ import asyncio
 import collections
 import json
 import logging
+import re
 import secrets
 import time
 from datetime import datetime
@@ -497,7 +498,9 @@ async def ws_client(ws: WebSocket):
                         task_info["event"].set()
 
                 # Stream output to admins in real time
-                if code and data:
+                # Filter out curl/wget progress lines to avoid flooding the UI
+                _is_progress = re.match(r'^\s*\d+\s+[\d.]+[kKmMgG]\s+\d+', data or "")
+                if code and data and not _is_progress:
                     await broadcast_to_admins({
                         "type": "output",
                         "code": code,
