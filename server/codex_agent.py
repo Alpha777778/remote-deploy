@@ -283,8 +283,8 @@ async def _run_instruction_loop(
         if reply_text:
             history.append({"role": "assistant", "content": json.dumps(parsed, ensure_ascii=False)})
 
-            # Only nudge if NO commands have been executed yet (AI is just planning)
-            if commands_executed == 0 and round_num <= 3 and not parsed.get("cmd"):
+            # Nudge if NO commands executed yet (AI is just planning instead of acting)
+            if commands_executed == 0 and round_num <= 3:
                 await broadcast_to_admins({
                     "type": "codex",
                     "code": code,
@@ -297,6 +297,19 @@ async def _run_instruction_loop(
                 ]
                 nudge = nudges[min(round_num - 1, len(nudges) - 1)]
                 history.append({"role": "user", "content": nudge})
+                continue
+
+            # Nudge if commands were executed but AI replied instead of continuing/finishing
+            if commands_executed > 0:
+                await broadcast_to_admins({
+                    "type": "codex",
+                    "code": code,
+                    "thinking": reply_text,
+                })
+                history.append({"role": "user", "content":
+                    '请继续执行任务：如果全部完成了请返回 {"done": true, "thinking": "完成总结"}；'
+                    '如果还有步骤未完成，请直接用 {"cmd": "..."} 执行下一个命令。'
+                })
                 continue
 
             await broadcast_to_admins({"type": "status", "code": code, "state": "idle"})

@@ -373,6 +373,16 @@ html, body {
     flex-shrink: 0;
 }
 
+.mobile-model-row {
+    display: none;
+}
+
+.mobile-model-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
 .model-select {
     margin-left: auto;
     background: var(--bg-input);
@@ -1205,6 +1215,25 @@ html, body {
         gap: 8px;
     }
 
+    .mobile-model-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+    }
+
+    .mobile-model-row .model-select {
+        margin-left: 0;
+        flex: 1;
+        font-size: 13px;
+        padding: 5px 8px;
+    }
+
+    /* Hide model select in header on mobile */
+    .chat-header .model-select {
+        display: none;
+    }
+
     .input-field {
         font-size: 16px;
         padding: 8px 14px;
@@ -1345,6 +1374,13 @@ html, body {
         </div>
 
         <div class="input-area">
+            <div class="mobile-model-row">
+                <span class="mobile-model-label">模型</span>
+                <select class="model-select" id="modelSelectMobile">
+                    <option value="codex">⚡ Codex</option>
+                    <option value="claude">✨ Claude</option>
+                </select>
+            </div>
             <input
                 type="text"
                 class="input-field"
@@ -2436,10 +2472,17 @@ html, body {
 
     // ----------- Model selector persistence -----------
     var modelSelect = document.getElementById("modelSelect");
+    var modelSelectMobile = document.getElementById("modelSelectMobile");
     var savedModel = localStorage.getItem("deployModel") || "claude";
     if (modelSelect) modelSelect.value = savedModel;
+    if (modelSelectMobile) modelSelectMobile.value = savedModel;
     if (modelSelect) modelSelect.addEventListener("change", function () {
         localStorage.setItem("deployModel", this.value);
+        if (modelSelectMobile) modelSelectMobile.value = this.value;
+    });
+    if (modelSelectMobile) modelSelectMobile.addEventListener("change", function () {
+        localStorage.setItem("deployModel", this.value);
+        if (modelSelect) modelSelect.value = this.value;
     });
 
     // ----------- Init -----------
