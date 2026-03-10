@@ -197,6 +197,66 @@ html, body {
     color: #fff;
 }
 
+.cmd-connect {
+    margin-top: 10px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 10px;
+}
+
+.cmd-connect-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.cmd-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 5px;
+}
+
+.cmd-label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    width: 30px;
+    flex-shrink: 0;
+}
+
+.cmd-box {
+    flex: 1;
+    font-size: 10px;
+    font-family: monospace;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 4px 6px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow-x: auto;
+    cursor: text;
+    min-width: 0;
+    outline: none;
+}
+
+.cmd-copy {
+    font-size: 10px;
+    padding: 3px 7px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.cmd-copy:hover { background: var(--color-accent); color: #fff; }
+.cmd-copy.copied { background: #27ae60; color: #fff; border-color: #27ae60; }
+
 .device-empty {
     display: flex;
     flex-direction: column;
@@ -299,6 +359,38 @@ html, body {
 .device-status-badge.offline {
     background: rgba(255, 68, 68, 0.12);
     color: var(--color-red);
+}
+
+/* AI Assistant card */
+.device-card.ai-assistant {
+    border-color: rgba(147, 51, 234, 0.45);
+    background: rgba(147, 51, 234, 0.07);
+    margin-bottom: 12px;
+}
+.device-card.ai-assistant:hover {
+    border-color: rgba(147, 51, 234, 0.75);
+    background: rgba(147, 51, 234, 0.12);
+}
+.device-card.ai-assistant.selected {
+    border-color: #9333ea;
+    background: rgba(147, 51, 234, 0.18);
+}
+.device-card.ai-assistant .device-code {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0;
+    color: #c084fc;
+}
+.ai-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(147, 51, 234, 0.25);
+    color: #c084fc;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    flex-shrink: 0;
 }
 
 .device-info {
@@ -471,6 +563,17 @@ html, body {
     background: var(--bg-hover);
     color: var(--text-primary);
     border-color: #555;
+}
+
+.new-session-btn {
+    border-color: rgba(0, 188, 212, 0.4);
+    color: var(--color-cyan);
+}
+
+.new-session-btn:hover {
+    background: rgba(0, 188, 212, 0.12);
+    border-color: var(--color-cyan);
+    color: var(--color-cyan);
 }
 
 /* ===================== Chat Area ===================== */
@@ -756,6 +859,7 @@ html, body {
     line-height: 1.6;
     color: var(--text-primary);
     word-break: break-word;
+    white-space: pre-wrap;
 }
 
 .chat-msg.assistant .chat-bubble.thinking {
@@ -1294,6 +1398,7 @@ html, body {
     <div style="display:flex;align-items:center;">
         <button class="topbar-back" id="topbarBack">&#9776; 设备</button>
         <div class="topbar-title"><span>Remote</span> Deploy</div>
+        <span id="roomBadge" style="margin-left:8px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:var(--border-color);color:var(--text-secondary);display:none;"></span>
     </div>
     <div style="display:flex;align-items:center;">
         <div class="connection-status">
@@ -1325,8 +1430,21 @@ html, body {
         <div class="sidebar-downloads">
             <div class="sidebar-downloads-title">Download Client</div>
             <div class="sidebar-downloads-btns">
-                <a href="/deploy/static/dist/远程部署客户端.exe" class="dl-btn dl-win" download>Windows</a>
-                <a href="/deploy/static/mac/远程部署客户端.command" class="dl-btn dl-mac" download>Mac</a>
+                <a id="dlWin" href="/deploy/static/dist/远程部署客户端.exe" class="dl-btn dl-win" download>Windows</a>
+                <a id="dlMac" href="/deploy/static/mac/远程部署客户端.command" class="dl-btn dl-mac" download>Mac</a>
+            </div>
+            <div class="cmd-connect">
+                <div class="cmd-connect-title">命令行连接（需先装 <a href="https://www.python.org/downloads/" target="_blank" style="color:var(--color-accent)">Python</a>）</div>
+                <div class="cmd-row">
+                    <span class="cmd-label">Mac</span>
+                    <input class="cmd-box" id="cmdMac" readonly value="curl -s http://120.27.152.51:5100/deploy/static/mac/client_stdlib.py | python3 - main" onclick="this.select()">
+                    <button class="cmd-copy" onclick="copyCmd('cmdMac', this)">复制</button>
+                </div>
+                <div class="cmd-row">
+                    <span class="cmd-label">Win</span>
+                    <input class="cmd-box" id="cmdWin" readonly value="python -c &quot;import urllib.request,sys; exec(urllib.request.urlopen('http://120.27.152.51:5100/deploy/static/mac/client_stdlib.py').read())&quot; main" onclick="this.select()">
+                    <button class="cmd-copy" onclick="copyCmd('cmdWin', this)">复制</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1343,6 +1461,7 @@ html, body {
             </select>
             <span class="codex-status" id="codexStatus"><span class="spinner"></span><span id="codexStatusText"></span></span>
             <button class="clear-btn" id="searchToggleBtn" title="搜索聊天记录">🔍</button>
+            <button class="clear-btn new-session-btn" id="newSessionBtn" title="清除 AI 记忆，开启全新会话">新会话</button>
             <button class="clear-btn" id="clearBtn" title="清空当前会话">清空</button>
         </div>
 
@@ -1429,6 +1548,7 @@ html, body {
     var sendBtn = document.getElementById("sendBtn");
     var stopBtn = document.getElementById("stopBtn");
     var clearBtn = document.getElementById("clearBtn");
+    var newSessionBtn = document.getElementById("newSessionBtn");
     var searchToggleBtn = document.getElementById("searchToggleBtn");
     var searchBarWrap = document.getElementById("searchBarWrap");
     var searchInput = document.getElementById("searchInput");
@@ -1446,6 +1566,33 @@ html, body {
     var logScrollBtn = document.getElementById("logScrollBtn");
     var logCloseBtn = document.getElementById("logCloseBtn");
     var logFilter = document.getElementById("logFilter");
+
+    // ----------- Room Detection -----------
+    var room = (location.pathname.match(/\/deploy\/([a-z]+)\//) || [])[1] || "main";
+    var AI_CODE = "__AI__";
+
+    // Show room badge in topbar if not main
+    if (room !== "main") {
+        var rb = document.getElementById("roomBadge");
+        if (rb) { rb.textContent = room.toUpperCase(); rb.style.display = "inline-block"; }
+    }
+
+    // ----------- Room-specific download links -----------
+    (function() {
+        var BASE = "http://120.27.152.51:5100";
+        var suffix = room === "main" ? "" : "_" + room;
+        // Mac .command
+        var dlMacEl = document.getElementById("dlMac");
+        if (dlMacEl) dlMacEl.href = "/deploy/static/mac/远程部署客户端" + suffix + ".command";
+        // Windows exe - each room has its own exe
+        var dlWinEl = document.getElementById("dlWin");
+        if (dlWinEl) dlWinEl.href = "/deploy/static/dist/远程部署客户端" + suffix + ".exe";
+        // CLI commands
+        var cmdMac = document.getElementById("cmdMac");
+        if (cmdMac) cmdMac.value = "curl -s " + BASE + "/deploy/static/mac/client_stdlib.py | python3 - " + room;
+        var cmdWin = document.getElementById("cmdWin");
+        if (cmdWin) cmdWin.value = "python -c \"import urllib.request,sys; exec(urllib.request.urlopen('" + BASE + "/deploy/static/mac/client_stdlib.py').read())\" " + room;
+    })();
 
     // ----------- State -----------
     var ws = null;
@@ -1617,10 +1764,31 @@ html, body {
         return window.innerWidth <= 768;
     }
 
+    function copyCmd(id, btn) {
+        var el = document.getElementById(id);
+        var text = el.value !== undefined ? el.value : el.textContent;
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;border:none;outline:none;background:transparent;";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.setSelectionRange(0, ta.value.length);
+        var ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        if (ok) {
+            btn.textContent = "已复制";
+            btn.classList.add("copied");
+            setTimeout(function() { btn.textContent = "复制"; btn.classList.remove("copied"); }, 1500);
+        } else {
+            btn.textContent = "请手动复制";
+            setTimeout(function() { btn.textContent = "复制"; }, 2000);
+        }
+    }
+
     // ----------- WebSocket -----------
     function buildWsUrl() {
         var proto = location.protocol === "https:" ? "wss:" : "ws:";
-        return proto + "//" + location.host + "/deploy/ws/admin";
+        return proto + "//" + location.host + "/deploy/ws/admin/" + room;
     }
 
     function connect() {
@@ -2093,12 +2261,18 @@ html, body {
         var msgs = deviceMessages[code];
         if (!msgs || msgs.length === 0) {
             // Device selected but no messages yet
-            var nick = getNickname(code);
             var welcome = document.createElement("div");
             welcome.className = "chat-welcome";
-            welcome.innerHTML = '<div class="logo">会话: ' + escapeHtml(code) + (nick ? ' (' + escapeHtml(nick) + ')' : '') + '</div>'
-                + '<div>在下方输入指令开始对话</div>'
-                + '<div class="hint">例如: 帮他安装 openclaw、检查 node 版本、查看磁盘空间...</div>';
+            if (code === AI_CODE) {
+                welcome.innerHTML = '<div class="logo" style="color:#c084fc">🤖 AI 助手</div>'
+                    + '<div>直接输入问题开始对话</div>'
+                    + '<div class="hint">可以问任何技术问题，如 OpenClaw 安装、服务器配置、代码问题等</div>';
+            } else {
+                var nick = getNickname(code);
+                welcome.innerHTML = '<div class="logo">会话: ' + escapeHtml(code) + (nick ? ' (' + escapeHtml(nick) + ')' : '') + '</div>'
+                    + '<div>在下方输入指令开始对话</div>'
+                    + '<div class="hint">例如: 帮他安装 openclaw、检查 node 版本、查看磁盘空间...</div>';
+            }
             chatArea.appendChild(welcome);
             return;
         }
@@ -2112,17 +2286,37 @@ html, body {
 
     // ----------- Chat header -----------
     function updateChatHeader(code) {
-        if (code) {
+        if (code === AI_CODE) {
+            chatDevice.textContent = "🤖 AI 助手";
+            chatDevice.style.color = "#c084fc";
+            chatNick.textContent = "直接对话，无需设备";
+        } else if (code) {
             chatDevice.textContent = code;
+            chatDevice.style.color = "";
             var nick = getNickname(code);
             chatNick.textContent = nick ? "- " + nick : "";
         } else {
             chatDevice.textContent = "未选择设备";
+            chatDevice.style.color = "";
             chatNick.textContent = "";
         }
     }
 
     // ----------- Device list rendering -----------
+    function buildAICard() {
+        var isSelected = selectedCode === AI_CODE;
+        var cls = "device-card ai-assistant" + (isSelected ? " selected" : "");
+        return '<div class="' + cls + '" data-code="' + AI_CODE + '">' +
+            '<div class="device-card-header">' +
+            '<span class="device-code">🤖 AI 助手</span>' +
+            '<span class="ai-badge">AI</span>' +
+            '</div>' +
+            '<div class="device-info">' +
+            '<div class="device-info-row"><span class="label">模式</span><span class="value" style="color:#c084fc">直接对话</span></div>' +
+            '</div>' +
+            '</div>';
+    }
+
     function renderDevices() {
         var onlineCount = 0;
         for (var i = 0; i < deviceData.length; i++) {
@@ -2131,14 +2325,15 @@ html, body {
         deviceCount.textContent = onlineCount + "/" + deviceData.length;
 
         if (deviceData.length === 0) {
-            deviceList.innerHTML = "";
-            deviceList.appendChild(deviceEmpty);
-            deviceEmpty.style.display = "flex";
+            deviceList.innerHTML = buildAICard();
+            deviceEmpty.style.display = "none";
+            var aiCardEl = deviceList.querySelector('.device-card[data-code="' + AI_CODE + '"]');
+            if (aiCardEl) aiCardEl.addEventListener("click", onCardClick);
             return;
         }
         deviceEmpty.style.display = "none";
 
-        var html = "";
+        var html = buildAICard();
         for (var j = 0; j < deviceData.length; j++) {
             var d = deviceData[j];
             var isSelected = d.code === selectedCode;
@@ -2187,7 +2382,8 @@ html, body {
         }
 
         // If selected device gone, try to find same hostname with new code
-        if (selectedCode) {
+        // (AI_CODE is always "available" - never treat it as gone)
+        if (selectedCode && selectedCode !== AI_CODE) {
             var found = false;
             var selectedHostname = null;
             for (var m = 0; m < deviceData.length; m++) {
@@ -2237,8 +2433,12 @@ html, body {
         if (code) {
             inputField.disabled = false;
             sendBtn.disabled = false;
-            var nick = getNickname(code);
-            inputField.placeholder = "跟 " + code + (nick ? " (" + nick + ")" : "") + " 说点什么...";
+            if (code === AI_CODE) {
+                inputField.placeholder = "和 AI 助手聊点什么...";
+            } else {
+                var nick = getNickname(code);
+                inputField.placeholder = "跟 " + code + (nick ? " (" + nick + ")" : "") + " 说点什么...";
+            }
             // Update stop button for this device's running state
             if (_deviceBusy[code]) {
                 stopBtn.classList.add("visible");
@@ -2378,6 +2578,20 @@ html, body {
             saveHistory();
             renderTerminal(selectedCode);
         }
+    });
+
+    newSessionBtn.addEventListener("click", function () {
+        if (!selectedCode) return;
+        // Cancel any running task
+        sendMessage({ type: "cancel", code: selectedCode });
+        // Ask server to clear AI memory for this device
+        sendMessage({ type: "new_session", code: selectedCode });
+        // Clear local display
+        deviceMessages[selectedCode] = [];
+        saveHistory();
+        renderTerminal(selectedCode);
+        // Show confirmation
+        storeAndRender("system", "✦ 已开启新会话，AI 记忆已清除", selectedCode);
     });
 
     backBtn.addEventListener("click", function () {

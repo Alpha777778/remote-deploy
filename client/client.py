@@ -30,17 +30,33 @@ from config import SERVER_URL
 # ---------------------------------------------------------------------------
 # Try to import tkinter (may fail on macOS system Python with broken Tk)
 # On macOS, broken Tk causes SIGABRT which try/except cannot catch.
-# So we test Tk in a subprocess - if it crashes, the main process is safe.
+# So we test Tk in a subprocess when running from source.
+# In a PyInstaller bundle, sys.executable IS the exe - spawning it as a
+# subprocess re-extracts the entire bundle and times out, so we fall back
+# to a direct try/except import instead.
 # ---------------------------------------------------------------------------
 import subprocess as _sp
-_tk_test = _sp.run(
-    [sys.executable, "-c",
-     "import tkinter; r=tkinter.Tk(); r.withdraw(); r.destroy()"],
-    capture_output=True, timeout=5
-)
-_TK_AVAILABLE = (_tk_test.returncode == 0)
-if _TK_AVAILABLE:
-    import tkinter as tk
+
+_TK_AVAILABLE = False
+tk = None  # noqa: assigned below if available
+
+if getattr(sys, "frozen", False):
+    # Running inside PyInstaller bundle - direct import is safe on Windows
+    try:
+        import tkinter as tk
+        _r = tk.Tk(); _r.withdraw(); _r.destroy()
+        _TK_AVAILABLE = True
+    except Exception:
+        pass
+else:
+    _tk_test = _sp.run(
+        [sys.executable, "-c",
+         "import tkinter; r=tkinter.Tk(); r.withdraw(); r.destroy()"],
+        capture_output=True, timeout=5
+    )
+    _TK_AVAILABLE = (_tk_test.returncode == 0)
+    if _TK_AVAILABLE:
+        import tkinter as tk
 
 # ---------------------------------------------------------------------------
 # Constants

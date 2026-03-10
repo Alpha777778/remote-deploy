@@ -60,6 +60,19 @@ _device_history: dict[str, dict] = {}
 _code_to_hostname: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
+# AI Assistant (pure chat, no shell execution) - per room
+# ---------------------------------------------------------------------------
+AI_CODE = "__AI__"
+
+_AI_CHAT_DIRECTIVE = """\
+你是一个专业的 AI 技术助手，擅长服务器运维、软件安装（尤其是 OpenClaw）、编程、系统配置等技术领域，也能回答任何普通问题。
+用简体中文回答，语言自然，可以使用 Markdown 格式（如代码块、列表）让回答更清晰。
+"""
+
+# room -> list of messages
+_ai_chat_history: dict[str, list] = {}
+
+# ---------------------------------------------------------------------------
 # httpx connection pool (reused across API calls)
 # ---------------------------------------------------------------------------
 _http_client: httpx.AsyncClient | None = None
@@ -411,6 +424,7 @@ async def _call_codex(conversation: list[dict]) -> str:
     headers = {
         "Authorization": f"Bearer {CODEX_API_KEY}",
         "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",
     }
     payload = {
         "model": CODEX_MODEL,
@@ -502,3 +516,62 @@ def _parse_response(text: str) -> dict | None:
             pass
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# AI Assistant pure chat (no shell execution)
+# ---------------------------------------------------------------------------
+
+def clear_ai_chat_history(room: str):
+    """Clear AI assistant chat history for a room."""
+    _ai_chat_history.pop(room, None)
+    logger.info("Cleared AI chat history for room %s", room)
+
+
+async def process_chat(
+    instruction: str,
+    room: str,
+    broadcast_to_admins: Callable[[dict], Awaitable[None]],
+    model: str = "claude",
+):
+    """Pure AI chat - no device, no shell execution."""
+    history = _ai_chat_history.setdefault(room, [])
+
+    if not history:
+        # First message: prepend directive
+        history.append({"role": "user", "content": _AI_CHAT_DIRECTIVE + "\n\n" + instruction})
+    else:
+        history.append({"role": "user", "content": instruction})
+
+    await broadcast_to_admins({"type": "status", "code": AI_CODE, "state": "calling_api"})
+
+    response_text = None
+    for attempt in range(2):
+        try:
+            if model == "claude":
+                response_text = await _call_claude(history)
+            else:
+                response_text = await _call_codex(history)
+            break
+        except httpx.TimeoutException as e:
+            if attempt == 0:
+                await broadcast_to_admins({"type": "log", "code": AI_CODE, "msg": "API timeout, retrying..."})
+                continue
+            await broadcast_to_admins({"type": "status", "code": AI_CODE, "state": "idle"})
+            await broadcast_to_admins({"type": "error", "code": AI_CODE, "msg": f"API timeout: {e}"})
+            history.pop()
+            return
+        except Exception as e:
+            await broadcast_to_admins({"type": "status", "code": AI_CODE, "state": "idle"})
+            await broadcast_to_admins({"type": "error", "code": AI_CODE, "msg": f"AI error: {e}"})
+            history.pop()
+            return
+
+    history.append({"role": "assistant", "content": response_text})
+
+    # Keep history bounded
+    if len(history) > MAX_HISTORY_MESSAGES:
+        history[:] = history[-MAX_HISTORY_MESSAGES:]
+
+    await broadcast_to_admins({"type": "status", "code": AI_CODE, "state": "idle"})
+    await broadcast_to_admins({"type": "reply", "code": AI_CODE, "text": response_text})

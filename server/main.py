@@ -1,13 +1,11 @@
 """
-Remote Deploy Server
-====================
-FastAPI + WebSocket server that manages:
-- Client connections (colleagues' machines)
-- Admin connections (dashboard browser)
-- Device registry (pairing code -> connection)
-- Command dispatch (admin instruction -> Codex agent -> client)
-
-Runs on port 5100.
+Remote Deploy Server - Multi-Room Edition
+==========================================
+Rooms: main / ren / cheng  — each fully isolated:
+  - Separate device registry
+  - Separate admin WebSocket connections
+  - Separate message buffers
+  - Separate TOTP auth
 """
 
 import asyncio
@@ -24,47 +22,63 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-
 from fastapi import Request
 
-from config import HOST, PORT, TOTP_SECRET
+from config import HOST, PORT, ROOM_TOTP_SECRETS
 import codex_agent
 import pyotp
 
-# TOTP verifier (allows current code +/- 1 window for clock drift)
-_totp = pyotp.TOTP(TOTP_SECRET)
+# ---------------------------------------------------------------------------
+# Room configuration
+# ---------------------------------------------------------------------------
+
+VALID_ROOMS = set(ROOM_TOTP_SECRETS.keys())   # {"main", "ren", "cheng"}
+
+_room_totp = {room: pyotp.TOTP(secret) for room, secret in ROOM_TOTP_SECRETS.items()}
 
 
-def verify_totp(code: str) -> bool:
-    """Verify a 6-digit TOTP code, allowing 1 window tolerance."""
-    return _totp.verify(code, valid_window=1)
+def verify_totp(code: str, room: str) -> bool:
+    # Try the room's own TOTP first
+    totp = _room_totp.get(room)
+    if totp and totp.verify(code, valid_window=1):
+        return True
+    # Main room TOTP works as master key for any sub-room
+    if room != "main":
+        main_totp = _room_totp.get("main")
+        if main_totp and main_totp.verify(code, valid_window=1):
+            return True
+    return False
+
 
 # ---------------------------------------------------------------------------
-# Session token store (persisted to disk, survives server restarts, 24h TTL)
+# Session token store (room-scoped, survives restarts)
 # ---------------------------------------------------------------------------
-# { token_str: expiry_timestamp }
-_session_tokens: dict[str, float] = {}
-_SESSION_TTL = 86400  # 24 hours
+_session_tokens: dict[str, dict] = {}   # token -> {"expiry": float, "room": str}
+_SESSION_TTL = 86400
 _SESSION_FILE = Path(__file__).parent / "sessions.json"
 
 
 def _load_sessions():
-    """Load session tokens from disk."""
     global _session_tokens
     if _SESSION_FILE.exists():
         try:
             data = json.loads(_SESSION_FILE.read_text(encoding="utf-8"))
             now = time.time()
-            _session_tokens = {k: v for k, v in data.items() if v > now}
+            new_data = {}
+            for k, v in data.items():
+                if isinstance(v, (int, float)) and v > now:
+                    new_data[k] = {"expiry": v, "room": "main"}   # migrate old format
+                elif isinstance(v, dict) and v.get("expiry", 0) > now:
+                    new_data[k] = v
+            _session_tokens = new_data
         except Exception:
             _session_tokens = {}
 
 
 def _save_sessions():
-    """Persist session tokens to disk."""
     try:
         now = time.time()
-        valid = {k: v for k, v in _session_tokens.items() if v > now}
+        valid = {k: v for k, v in _session_tokens.items() if v.get("expiry", 0) > now}
         _SESSION_FILE.write_text(json.dumps(valid), encoding="utf-8")
     except Exception:
         pass
@@ -73,78 +87,64 @@ def _save_sessions():
 _load_sessions()
 
 
-def _create_session() -> str:
-    """Generate a new session token."""
+def _create_session(room: str) -> str:
     token = secrets.token_urlsafe(32)
-    _session_tokens[token] = time.time() + _SESSION_TTL
+    _session_tokens[token] = {"expiry": time.time() + _SESSION_TTL, "room": room}
     _save_sessions()
     return token
 
 
-def _verify_session(token: str) -> bool:
-    """Check if a session token is valid and not expired."""
-    expiry = _session_tokens.get(token)
-    if expiry is None:
+def _verify_session(token: str, room: str) -> bool:
+    entry = _session_tokens.get(token)
+    if not entry:
         return False
-    if time.time() > expiry:
+    if time.time() > entry.get("expiry", 0):
         _session_tokens.pop(token, None)
         _save_sessions()
         return False
-    return True
+    token_room = entry.get("room")
+    # Exact match, or main-room session acts as master for any sub-room
+    return token_room == room or (token_room == "main" and room != "main")
+
 
 # ---------------------------------------------------------------------------
-# Rate limiting for client registration (Fix 4)
+# Rate limiting
 # ---------------------------------------------------------------------------
-# { ip: [timestamp, timestamp, ...] }
 _reg_attempts: dict[str, list[float]] = {}
-_REG_RATE_LIMIT = 10  # max registrations per window
-_REG_RATE_WINDOW = 60  # seconds
+_REG_RATE_LIMIT = 10
+_REG_RATE_WINDOW = 60
 
 
 def _check_rate_limit(ip: str) -> bool:
-    """Return True if the IP is within rate limit, False if exceeded."""
     now = time.time()
-    attempts = _reg_attempts.get(ip, [])
-    # Remove expired entries
-    attempts = [t for t in attempts if now - t < _REG_RATE_WINDOW]
+    attempts = [t for t in _reg_attempts.get(ip, []) if now - t < _REG_RATE_WINDOW]
     _reg_attempts[ip] = attempts
     if len(attempts) >= _REG_RATE_LIMIT:
         return False
     attempts.append(now)
     return True
 
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("deploy_server")
 
-# ---------------------------------------------------------------------------
-# Log buffer for real-time log viewer (circular buffer, last 500 entries)
-# ---------------------------------------------------------------------------
-LOG_BUFFER_SIZE = 500
+LOG_BUFFER_SIZE = 50
 log_buffer: collections.deque[dict] = collections.deque(maxlen=LOG_BUFFER_SIZE)
 
-
-# Loggers worth showing in admin panel
 _ALLOWED_LOGGERS = {"deploy_server", "codex_agent", "uvicorn.error"}
 
 
 class AdminLogHandler(logging.Handler):
-    """Captures log records into a buffer and broadcasts to admin WS clients."""
-
     def emit(self, record: logging.LogRecord):
         try:
-            # Filter out noisy/useless logs (heartbeat pongs, library internals)
             msg_text = record.getMessage()
             if msg_text.strip() in ("ok", "pong", ""):
                 return
             if record.name not in _ALLOWED_LOGGERS and not record.name.startswith("deploy_"):
                 return
-
             entry = {
                 "ts": datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[:-3],
                 "level": record.levelname,
@@ -152,158 +152,149 @@ class AdminLogHandler(logging.Handler):
                 "msg": self.format(record),
             }
             log_buffer.append(entry)
-            # Schedule broadcast (non-blocking)
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(_broadcast_log_entry(entry))
+                loop.create_task(_broadcast_log_all_rooms(entry))
             except RuntimeError:
-                pass  # No running loop yet (startup)
+                pass
         except Exception:
             pass
 
 
-async def _broadcast_log_entry(entry: dict):
-    """Send a single log entry to all admin connections (concurrent)."""
-    if not admin_connections:
-        return
+async def _broadcast_log_all_rooms(entry: dict):
+    """Broadcast server log to all rooms' admins."""
     msg = json.dumps({"type": "server_log", "entry": entry}, ensure_ascii=False)
-
-    async def _send(ws):
-        try:
-            await ws.send_text(msg)
-            return None
-        except Exception:
-            return ws
-
-    results = await asyncio.gather(*[_send(ws) for ws in admin_connections])
-    for ws in results:
-        if ws is not None and ws in admin_connections:
-            admin_connections.remove(ws)
+    for rs in _rooms.values():
+        dead = set()
+        for ws in list(rs.admin_connections):
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                dead.add(ws)
+        rs.admin_connections -= dead
 
 
-# Install the handler on root logger to capture everything
 _admin_handler = AdminLogHandler()
 _admin_handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s"))
 _admin_handler.setLevel(logging.INFO)
 logging.getLogger().addHandler(_admin_handler)
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
-app = FastAPI(title="Remote Deploy Server", version="1.0.0")
-
-STATIC_DIR = Path(__file__).parent / "static"
-
-# Mount static files only if the directory exists and has content
-if STATIC_DIR.exists():
-    app.mount("/deploy/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ---------------------------------------------------------------------------
-# State
+# Per-room state
 # ---------------------------------------------------------------------------
 
-# Device registry: code -> device info dict
-# {
-#   "code": str,
-#   "os": str,
-#   "arch": str,
-#   "hostname": str,
-#   "status": "online" | "offline",
-#   "connected_at": float,
-#   "ws": WebSocket (not serialized),
-# }
-devices: dict[str, dict[str, Any]] = {}
+class RoomState:
+    def __init__(self, name: str):
+        self.name = name
+        self.devices: dict[str, dict[str, Any]] = {}
+        self.admin_connections: set[WebSocket] = set()
+        self.device_msg_buffer: dict[str, collections.deque] = {}
+        self.msg_seq: int = 0
+        self.agent_tasks: dict[str, asyncio.Task] = {}
 
-# Admin WebSocket connections
-admin_connections: list[WebSocket] = []
+    def buffer_msg(self, message: dict):
+        code = message.get("code")
+        if not code:
+            return
+        self.msg_seq += 1
+        message["_seq"] = self.msg_seq
+        if code not in self.device_msg_buffer:
+            self.device_msg_buffer[code] = collections.deque(maxlen=50)
+        self.device_msg_buffer[code].append(message)
 
-# Running agent tasks: device_code -> asyncio.Task (for cancellation)
-_running_agent_tasks: dict[str, asyncio.Task] = {}
+    def device_list_payload(self) -> dict:
+        return {
+            "type": "devices",
+            "list": [
+                {
+                    "code": info["code"],
+                    "os": info.get("os", "Unknown"),
+                    "arch": info.get("arch", "Unknown"),
+                    "hostname": info.get("hostname", "Unknown"),
+                    "status": info.get("status", "offline"),
+                }
+                for info in self.devices.values()
+                if info.get("status") == "online"
+            ],
+        }
 
-# Per-device message buffer: keeps recent messages so reconnecting admins
-# can catch up on what they missed. Keyed by device code.
-# { device_code: deque([{...msg with _seq...}, ...]) }
-_device_msg_buffer: dict[str, collections.deque] = {}
-_DEVICE_BUF_SIZE = 50  # messages per device
-_msg_seq = 0  # global sequence counter
+    async def broadcast(self, message: dict):
+        msg_type = message.get("type", "")
+        if msg_type in ("reply", "output", "error", "codex", "log", "status"):
+            self.buffer_msg(message)
+        if not self.admin_connections:
+            return
+        text = json.dumps(message, ensure_ascii=False)
+        dead = set()
+        for ws in list(self.admin_connections):
+            try:
+                await ws.send_text(text)
+            except Exception:
+                dead.add(ws)
+        self.admin_connections -= dead
 
 
-def _buffer_msg(message: dict):
-    """Buffer a device-related message with a sequence number."""
-    global _msg_seq
-    code = message.get("code")
-    if not code:
-        return
-    _msg_seq += 1
-    message["_seq"] = _msg_seq
-    if code not in _device_msg_buffer:
-        _device_msg_buffer[code] = collections.deque(maxlen=_DEVICE_BUF_SIZE)
-    _device_msg_buffer[code].append(message)
+_rooms: dict[str, RoomState] = {r: RoomState(r) for r in VALID_ROOMS}
 
-# Task output tracking: task_id -> asyncio.Event + result storage
-# Each entry: {"event": asyncio.Event, "data": str, "exit_code": int, "chunks": [str]}
+# Global pending tasks (UUID task_ids, no collision across rooms)
 pending_tasks: dict[str, dict[str, Any]] = {}
 
 
 # ---------------------------------------------------------------------------
-# Helper functions
+# App & static files
 # ---------------------------------------------------------------------------
 
-def device_list_payload() -> dict:
-    """Build the 'devices' message for admins."""
-    return {
-        "type": "devices",
-        "list": [
-            {
-                "code": info["code"],
-                "os": info.get("os", "Unknown"),
-                "arch": info.get("arch", "Unknown"),
-                "hostname": info.get("hostname", "Unknown"),
-                "status": info.get("status", "offline"),
-            }
-            for info in devices.values()
-        ],
-    }
+app = FastAPI(title="Remote Deploy Server", version="2.0.0")
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/deploy/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-async def broadcast_to_admins(message: dict):
-    """Send a JSON message to all connected admin WebSockets (concurrent).
-    Always buffers important device messages for replay on reconnect."""
-    # Always buffer important messages with a device code
-    msg_type = message.get("type", "")
-    if msg_type in ("reply", "output", "error", "codex", "log", "status"):
-        _buffer_msg(message)
-
-    if not admin_connections:
-        return
-    text = json.dumps(message, ensure_ascii=False)
-
-    async def _send(ws):
-        try:
-            await ws.send_text(text)
-            return None
-        except Exception:
-            return ws
-
-    results = await asyncio.gather(*[_send(ws) for ws in admin_connections])
-    for ws in results:
-        if ws is not None and ws in admin_connections:
-            admin_connections.remove(ws)
+def _serve_html() -> HTMLResponse:
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    return HTMLResponse("<html><body><h1>Remote Deploy</h1><p>index.html not found</p></body></html>")
 
 
-async def send_command_to_client(code: str, task_id: str, cmd: str):
-    """Send an exec command to a connected client device."""
-    device = devices.get(code)
+@app.get("/deploy/")
+async def admin_main():
+    return _serve_html()
+
+
+@app.get("/deploy/{room}/")
+async def admin_room(room: str):
+    if room not in VALID_ROOMS:
+        return JSONResponse(status_code=404, content={"error": f"Unknown room: {room}"})
+    return _serve_html()
+
+
+@app.get("/deploy/api/devices")
+async def api_devices(request: Request, token: str = "", room: str = "main"):
+    auth_header = request.headers.get("authorization", "")
+    provided = token or (auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else "")
+    if not verify_totp(provided, room):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    rs = _rooms.get(room)
+    return JSONResponse(content=rs.device_list_payload() if rs else {"type": "devices", "list": []})
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+async def send_command_to_client(room: str, code: str, task_id: str, cmd: str):
+    rs = _rooms[room]
+    device = rs.devices.get(code)
     if not device:
-        raise ValueError(f"Device {code} not found")
+        raise ValueError(f"Device {code} not found in room {room}")
     if device.get("status") != "online":
         raise ValueError(f"Device {code} is offline")
-
     ws = device.get("ws")
     if ws is None:
-        raise ValueError(f"Device {code} has no WebSocket connection")
+        raise ValueError(f"Device {code} has no WebSocket")
 
-    # Prepare task output tracking
     pending_tasks[task_id] = {
         "event": asyncio.Event(),
         "data": "",
@@ -311,96 +302,56 @@ async def send_command_to_client(code: str, task_id: str, cmd: str):
         "chunks": [],
         "created_at": time.time(),
     }
-
-    payload = json.dumps({"type": "exec", "task_id": task_id, "cmd": cmd})
     try:
-        await ws.send_text(payload)
+        await ws.send_text(json.dumps({"type": "exec", "task_id": task_id, "cmd": cmd}))
     except Exception:
         pending_tasks.pop(task_id, None)
         raise
 
-    # Also notify admins about the command being sent
-    await broadcast_to_admins({
-        "type": "output",
-        "code": code,
-        "task_id": task_id,
-        "data": f"$ {cmd}\n",
-    })
+    await rs.broadcast({"type": "output", "code": code, "task_id": task_id, "data": f"$ {cmd}\n"})
 
 
 async def wait_for_task_output(task_id: str) -> dict:
-    """Wait for a task to complete and return its output."""
     task_info = pending_tasks.get(task_id)
     if task_info is None:
         raise ValueError(f"Task {task_id} not found")
-
     try:
-        await asyncio.wait_for(
-            task_info["event"].wait(),
-            timeout=codex_agent.CMD_TIMEOUT,
-        )
+        await asyncio.wait_for(task_info["event"].wait(), timeout=codex_agent.CMD_TIMEOUT)
     except asyncio.TimeoutError:
-        # Clean up and re-raise
         pending_tasks.pop(task_id, None)
         raise
-
-    result = {
-        "data": task_info["data"],
-        "exit_code": task_info["exit_code"],
-    }
+    result = {"data": task_info["data"], "exit_code": task_info["exit_code"]}
     pending_tasks.pop(task_id, None)
     return result
 
 
 # ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-@app.get("/deploy/")
-async def admin_dashboard():
-    """Serve the admin dashboard HTML."""
-    index_path = STATIC_DIR / "index.html"
-    if index_path.exists():
-        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
-    # Placeholder when dashboard has not been created yet
-    return HTMLResponse(
-        content=(
-            "<html><body>"
-            "<h1>Remote Deploy - Admin Dashboard</h1>"
-            "<p>Dashboard HTML not yet created. Place <code>index.html</code> in "
-            "<code>server/static/</code>.</p>"
-            "</body></html>"
-        )
-    )
-
-
-@app.get("/deploy/api/devices")
-async def api_devices(request: Request, token: str = ""):
-    """REST endpoint to list connected devices (requires TOTP code)."""
-    auth_header = request.headers.get("authorization", "")
-    provided = token or (auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else "")
-    if not verify_totp(provided):
-        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-    return JSONResponse(content=device_list_payload())
-
-
-# ---------------------------------------------------------------------------
-# WebSocket: Client endpoint
+# WebSocket: Client
 # ---------------------------------------------------------------------------
 
 @app.websocket("/deploy/ws/client")
-async def ws_client(ws: WebSocket):
+async def ws_client_legacy(websocket: WebSocket):
+    """Backward compatibility: old clients without room → main room."""
+    await ws_client(websocket, "main")
+
+
+@app.websocket("/deploy/ws/client/{room}")
+async def ws_client(ws: WebSocket, room: str):
+    if room not in VALID_ROOMS:
+        await ws.close()
+        return
+
     await ws.accept()
+    rs = _rooms[room]
     code = None
     client_ip = ws.client.host if ws.client else "unknown"
-    logger.info("Client WebSocket connected from %s (awaiting registration)", client_ip)
+    logger.info("Client WS connected: room=%s ip=%s", room, client_ip)
 
     try:
         while True:
             try:
                 raw = await asyncio.wait_for(ws.receive_text(), timeout=120)
             except asyncio.TimeoutError:
-                # No message in 120s, check if client is alive
                 try:
                     await ws.send_text(json.dumps({"type": "ping"}))
                 except Exception:
@@ -410,52 +361,33 @@ async def ws_client(ws: WebSocket):
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                logger.warning("Client sent invalid JSON: %s", raw[:200])
                 continue
 
             msg_type = msg.get("type")
 
-            # --- Registration ---
             if msg_type == "register":
-                # Rate limit check
                 if not _check_rate_limit(client_ip):
-                    logger.warning("Rate limit exceeded for %s", client_ip)
                     await ws.send_text(json.dumps({"type": "error", "msg": "Rate limit exceeded"}))
                     continue
-
                 code = msg.get("code", "").strip().upper()
                 if not code:
                     await ws.send_text(json.dumps({"type": "error", "msg": "Missing pairing code"}))
                     continue
-
                 hostname = msg.get("hostname", "Unknown")
 
-                # If same code already exists (reconnection), just update the WS
-                if code in devices:
-                    old_ws = devices[code].get("ws")
+                if code in rs.devices:
+                    old_ws = rs.devices[code].get("ws")
                     if old_ws and old_ws != ws:
                         try:
                             await old_ws.close()
                         except Exception:
                             pass
-                    devices[code]["ws"] = ws
-                    devices[code]["status"] = "online"
-                    devices[code]["connected_at"] = time.time()
-                    logger.info("Client reconnected: code=%s hostname=%s", code, hostname)
+                    rs.devices[code].update({"ws": ws, "status": "online", "connected_at": time.time()})
+                    logger.info("Client reconnected: room=%s code=%s", room, code)
                 else:
-                    # Remove stale entries from same hostname (different code)
-                    # NOTE: Do NOT close old WS connections - that triggers reconnect
-                    # loops. Just remove them from the device list silently.
-                    stale_codes = [
-                        c for c, info in devices.items()
-                        if c != code
-                        and info.get("hostname") == hostname
-                    ]
-                    for sc in stale_codes:
-                        logger.info("Removing stale device %s (same hostname %s, keeping WS open)", sc, hostname)
-                        del devices[sc]
-
-                    devices[code] = {
+                    for sc in [c for c, i in rs.devices.items() if c != code and i.get("hostname") == hostname]:
+                        del rs.devices[sc]
+                    rs.devices[code] = {
                         "code": code,
                         "os": msg.get("os", "Unknown"),
                         "arch": msg.get("arch", "Unknown"),
@@ -464,23 +396,15 @@ async def ws_client(ws: WebSocket):
                         "connected_at": time.time(),
                         "ws": ws,
                     }
-                    logger.info(
-                        "Client registered: code=%s os=%s hostname=%s",
-                        code, msg.get("os"), msg.get("hostname"),
-                    )
+                    logger.info("Client registered: room=%s code=%s hostname=%s", room, code, hostname)
 
-                # Acknowledge registration
                 await ws.send_text(json.dumps({"type": "registered", "code": code}))
-
-                # Notify admins
-                await broadcast_to_admins({
-                    "type": "log",
-                    "code": code,
+                await rs.broadcast({
+                    "type": "log", "code": code,
                     "msg": f"Client {code} connected ({msg.get('os', '?')} / {msg.get('hostname', '?')})",
                 })
-                await broadcast_to_admins(device_list_payload())
+                await rs.broadcast(rs.device_list_payload())
 
-            # --- Command output ---
             elif msg_type == "output":
                 task_id = msg.get("task_id")
                 data = msg.get("data", "")
@@ -491,68 +415,48 @@ async def ws_client(ws: WebSocket):
                     task_info = pending_tasks[task_id]
                     if data:
                         task_info["chunks"].append(data)
-
                     if done:
                         task_info["data"] = "".join(task_info["chunks"])
                         task_info["exit_code"] = exit_code if exit_code is not None else 0
                         task_info["event"].set()
 
-                # Stream output to admins in real time
-                # Filter out curl/wget progress lines to avoid flooding the UI
-                _is_progress = re.match(r'^\s*\d+\s+[\d.]+[kKmMgG]\s+\d+', data or "")
-                if code and data and not _is_progress:
-                    await broadcast_to_admins({
-                        "type": "output",
-                        "code": code,
-                        "task_id": task_id,
-                        "data": data,
-                    })
-
+                if code and data and not re.match(r'^\s*\d+\s+[\d.]+[kKmMgG]\s+\d+', data):
+                    await rs.broadcast({"type": "output", "code": code, "task_id": task_id, "data": data})
                 if done and code:
-                    await broadcast_to_admins({
-                        "type": "log",
-                        "code": code,
-                        "msg": f"Command completed (exit_code={exit_code})",
-                    })
+                    await rs.broadcast({"type": "log", "code": code, "msg": f"Command completed (exit_code={exit_code})"})
 
-            # --- Heartbeat / ping ---
             elif msg_type == "ping":
                 await ws.send_text(json.dumps({"type": "pong"}))
-
-            # --- Heartbeat / pong (response to server's ping) ---
             elif msg_type == "pong":
-                pass  # client is alive, nothing to do
-
-            else:
-                logger.warning("Unknown client message type: %s", msg_type)
+                pass
 
     except WebSocketDisconnect:
-        logger.info("Client WebSocket disconnected: code=%s", code)
+        logger.info("Client WS disconnected: room=%s code=%s", room, code)
     except Exception as e:
-        logger.error("Client WebSocket error: %s", e)
+        logger.error("Client WS error: room=%s %s", room, e)
     finally:
-        # Mark device offline
-        if code and code in devices:
-            devices[code]["status"] = "offline"
-            devices[code].pop("ws", None)
-            await broadcast_to_admins({
-                "type": "log",
-                "code": code,
-                "msg": f"Client {code} disconnected",
-            })
-            await broadcast_to_admins(device_list_payload())
+        if code and code in rs.devices:
+            rs.devices[code]["status"] = "offline"
+            rs.devices[code].pop("ws", None)
+            await rs.broadcast({"type": "log", "code": code, "msg": f"Client {code} disconnected"})
+            await rs.broadcast(rs.device_list_payload())
 
 
 # ---------------------------------------------------------------------------
-# WebSocket: Admin endpoint
+# WebSocket: Admin
 # ---------------------------------------------------------------------------
 
-@app.websocket("/deploy/ws/admin")
-async def ws_admin(ws: WebSocket):
+@app.websocket("/deploy/ws/admin/{room}")
+async def ws_admin(ws: WebSocket, room: str):
+    if room not in VALID_ROOMS:
+        await ws.close()
+        return
+
     await ws.accept()
-    logger.info("Admin WebSocket connected (awaiting auth)")
+    rs = _rooms[room]
+    logger.info("Admin WS connected: room=%s (awaiting auth)", room)
 
-    # --- Auth handshake: TOTP code or session token ---
+    # --- Auth handshake ---
     try:
         raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
         msg = json.loads(raw)
@@ -562,72 +466,61 @@ async def ws_admin(ws: WebSocket):
             return
         session = msg.get("session", "")
         totp_code = str(msg.get("token", ""))
-        if session and _verify_session(session):
-            # Session token auth (reconnect)
+        if session and _verify_session(session, room):
             session_token = session
-            logger.info("Admin authenticated via session token")
-        elif totp_code and verify_totp(totp_code):
-            # TOTP auth (first login), issue new session
-            session_token = _create_session()
-            logger.info("Admin authenticated via TOTP, session issued")
+            logger.info("Admin auth via session: room=%s", room)
+        elif totp_code and verify_totp(totp_code, room):
+            session_token = _create_session(room)
+            logger.info("Admin auth via TOTP: room=%s", room)
         else:
             await ws.send_text(json.dumps({"type": "auth_failed", "msg": "验证码无效或已过期"}))
             await ws.close()
-            logger.warning("Admin auth failed (invalid TOTP/session)")
+            logger.warning("Admin auth FAILED: room=%s", room)
             return
-    except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+    except Exception:
         try:
             await ws.send_text(json.dumps({"type": "auth_failed", "msg": "Auth timeout"}))
             await ws.close()
         except Exception:
             pass
-        logger.warning("Admin auth timeout or error")
         return
 
     await ws.send_text(json.dumps({"type": "auth_ok", "session": session_token}))
-    admin_connections.append(ws)
-    logger.info("Admin authenticated (total: %d)", len(admin_connections))
+    rs.admin_connections.add(ws)
+    logger.info("Admin authenticated: room=%s (total: %d)", room, len(rs.admin_connections))
 
-    # Send current device list immediately
     try:
-        await ws.send_text(json.dumps(device_list_payload()))
+        await ws.send_text(json.dumps(rs.device_list_payload()))
     except Exception:
-        if ws in admin_connections:
-            admin_connections.remove(ws)
+        rs.admin_connections.discard(ws)
         return
 
-    # Send buffered logs so admin sees recent history
+    # Send buffered server logs
     try:
-        await ws.send_text(json.dumps({
-            "type": "server_logs_bulk",
-            "entries": list(log_buffer),
-        }, ensure_ascii=False))
+        await ws.send_text(json.dumps({"type": "server_logs_bulk", "entries": list(log_buffer)}, ensure_ascii=False))
     except Exception:
         pass
 
-    # Replay per-device message buffer so admin catches up on missed messages
-    # The frontend deduplicates by _seq
-    last_seq = msg.get("last_seq", 0)  # from auth message
+    # Replay device message buffer
+    last_seq = msg.get("last_seq", 0)
     replay_count = 0
-    for code_key, buf in _device_msg_buffer.items():
-        for buffered_msg in buf:
-            if buffered_msg.get("_seq", 0) <= last_seq:
+    for buf in rs.device_msg_buffer.values():
+        for bm in buf:
+            if bm.get("_seq", 0) <= last_seq:
                 continue
             try:
-                await ws.send_text(json.dumps(buffered_msg, ensure_ascii=False))
+                await ws.send_text(json.dumps(bm, ensure_ascii=False))
                 replay_count += 1
             except Exception:
                 break
     if replay_count:
-        logger.info("Replayed %d buffered device messages to admin (after seq %d)", replay_count, last_seq)
+        logger.info("Replayed %d buffered msgs to admin: room=%s", replay_count, room)
 
     try:
         while True:
-            # Use wait_for to implement a server-side ping timeout
             try:
                 raw = await asyncio.wait_for(ws.receive_text(), timeout=60)
             except asyncio.TimeoutError:
-                # No message in 60s, send a ping to check if alive
                 try:
                     await ws.send_text(json.dumps({"type": "ping"}))
                 except Exception:
@@ -637,122 +530,109 @@ async def ws_admin(ws: WebSocket):
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                logger.warning("Admin sent invalid JSON: %s", raw[:200])
                 continue
 
             msg_type = msg.get("type")
 
-            # --- Instruction to execute on a device ---
             if msg_type == "instruction":
                 target_code = msg.get("code", "").strip().upper()
                 text = msg.get("text", "").strip()
-
-                logger.info("Instruction from admin for %s: %s", target_code, text[:100])
-
                 if not target_code or not text:
-                    await ws.send_text(json.dumps({
-                        "type": "error",
-                        "code": target_code,
-                        "msg": "Missing code or instruction text",
-                    }))
+                    await ws.send_text(json.dumps({"type": "error", "code": target_code, "msg": "Missing code or text"}))
                     continue
 
-                device = devices.get(target_code)
-                if not device:
-                    await ws.send_text(json.dumps({
-                        "type": "error",
-                        "code": target_code,
-                        "msg": f"Device {target_code} not found",
-                    }))
-                    continue
-
-                if device.get("status") != "online":
-                    await ws.send_text(json.dumps({
-                        "type": "error",
-                        "code": target_code,
-                        "msg": f"Device {target_code} is offline",
-                    }))
-                    continue
-
-                # Launch agent loop as a background task
-                device_info = {
-                    "os": device.get("os", "Unknown"),
-                    "arch": device.get("arch", "Unknown"),
-                    "hostname": device.get("hostname", "Unknown"),
-                }
                 model = msg.get("model", "codex")
 
-                await broadcast_to_admins({
-                    "type": "log",
-                    "code": target_code,
-                    "msg": f"Instruction received [{model}]: {text}",
-                })
+                # --- AI Assistant mode (no device needed) ---
+                if target_code == codex_agent.AI_CODE:
+                    task = asyncio.create_task(
+                        codex_agent.process_chat(
+                            instruction=text,
+                            room=room,
+                            broadcast_to_admins=rs.broadcast,
+                            model=model,
+                        )
+                    )
+                    rs.agent_tasks[codex_agent.AI_CODE] = task
+                    task.add_done_callback(lambda t: rs.agent_tasks.pop(codex_agent.AI_CODE, None))
+                    continue
 
-                # Track the task so admin can cancel it
+                device = rs.devices.get(target_code)
+                if not device:
+                    await ws.send_text(json.dumps({"type": "error", "code": target_code, "msg": f"Device {target_code} not found"}))
+                    continue
+                if device.get("status") != "online":
+                    await ws.send_text(json.dumps({"type": "error", "code": target_code, "msg": f"Device {target_code} is offline"}))
+                    continue
+
+                device_info = {"os": device.get("os", "Unknown"), "arch": device.get("arch", "Unknown"), "hostname": device.get("hostname", "Unknown")}
+                await rs.broadcast({"type": "log", "code": target_code, "msg": f"Instruction received [{model}]: {text}"})
+
+                async def _send_cmd(code, task_id, cmd, _room=room):
+                    await send_command_to_client(_room, code, task_id, cmd)
+
                 task = asyncio.create_task(
                     codex_agent.process_instruction(
-                        instruction=text,
-                        code=target_code,
-                        device_info=device_info,
-                        send_command=send_command_to_client,
-                        wait_for_output=wait_for_task_output,
-                        broadcast_to_admins=broadcast_to_admins,
-                        model=model,
+                        instruction=text, code=target_code, device_info=device_info,
+                        send_command=_send_cmd, wait_for_output=wait_for_task_output,
+                        broadcast_to_admins=rs.broadcast, model=model,
                     )
                 )
-                _running_agent_tasks[target_code] = task
-                task.add_done_callback(lambda t, c=target_code: _running_agent_tasks.pop(c, None))
+                rs.agent_tasks[target_code] = task
+                task.add_done_callback(lambda t, c=target_code: rs.agent_tasks.pop(c, None))
 
-            # --- Cancel running task ---
             elif msg_type == "cancel":
                 target_code = msg.get("code", "").strip().upper()
-                task = _running_agent_tasks.get(target_code)
+                task = rs.agent_tasks.get(target_code)
                 if task and not task.done():
                     task.cancel()
-                    await broadcast_to_admins({"type": "status", "code": target_code, "state": "idle"})
-                    await broadcast_to_admins({"type": "log", "code": target_code, "msg": "Task cancelled by admin"})
-                    await broadcast_to_admins({"type": "reply", "code": target_code, "text": "⛔ 任务已中断"})
+                    await rs.broadcast({"type": "status", "code": target_code, "state": "idle"})
+                    await rs.broadcast({"type": "log", "code": target_code, "msg": "Task cancelled by admin"})
+                    await rs.broadcast({"type": "reply", "code": target_code, "text": "⛔ 任务已中断"})
                 else:
                     await ws.send_text(json.dumps({"type": "log", "code": target_code, "msg": "No running task to cancel"}))
 
-            # --- Ping ---
+            elif msg_type == "new_session":
+                target_code = msg.get("code", "").strip().upper()
+                task = rs.agent_tasks.get(target_code)
+                if task and not task.done():
+                    task.cancel()
+                if target_code == codex_agent.AI_CODE:
+                    codex_agent.clear_ai_chat_history(room)
+                    logger.info("AI chat history cleared: room=%s", room)
+                    await ws.send_text(json.dumps({"type": "log", "code": target_code, "msg": "AI 助手记忆已清除，开始新对话"}))
+                else:
+                    codex_agent.clear_history(target_code)
+                    logger.info("New session started: room=%s code=%s", room, target_code)
+                    await ws.send_text(json.dumps({"type": "log", "code": target_code, "msg": "New session started, AI memory cleared"}))
+
             elif msg_type == "ping":
                 await ws.send_text(json.dumps({"type": "pong"}))
 
-            else:
-                logger.warning("Unknown admin message type: %s", msg_type)
-
     except WebSocketDisconnect:
-        logger.info("Admin WebSocket disconnected")
+        logger.info("Admin WS disconnected: room=%s", room)
     except Exception as e:
-        logger.error("Admin WebSocket error: %s", e)
+        logger.error("Admin WS error: room=%s %s", room, e)
     finally:
-        if ws in admin_connections:
-            admin_connections.remove(ws)
-        logger.info("Admin connections remaining: %d", len(admin_connections))
+        rs.admin_connections.discard(ws)
+        logger.info("Admin connections: room=%s remaining=%d", room, len(rs.admin_connections))
 
 
 # ---------------------------------------------------------------------------
-# Startup / Shutdown events
+# Startup / Shutdown
 # ---------------------------------------------------------------------------
 
 @app.on_event("startup")
 async def on_startup():
-    logger.info("Remote Deploy Server starting on %s:%d", HOST, PORT)
-    logger.info("Admin dashboard: http://localhost:%d/deploy/", PORT)
-    logger.info("Client WS:      ws://localhost:%d/deploy/ws/client", PORT)
-    logger.info("Admin WS:       ws://localhost:%d/deploy/ws/admin", PORT)
-    # Start periodic stale task cleanup
+    logger.info("Remote Deploy Server v2 started on %s:%d rooms=%s", HOST, PORT, list(VALID_ROOMS))
     asyncio.create_task(_cleanup_stale_tasks())
 
 
 async def _cleanup_stale_tasks():
-    """Periodically remove stale pending tasks (older than 5 min)."""
     while True:
         await asyncio.sleep(60)
         now = time.time()
-        stale = [tid for tid, info in pending_tasks.items()
-                 if now - info.get("created_at", now) > 300]
+        stale = [tid for tid, info in pending_tasks.items() if now - info.get("created_at", now) > 300]
         for tid in stale:
             pending_tasks.pop(tid, None)
         if stale:
@@ -762,27 +642,8 @@ async def _cleanup_stale_tasks():
 @app.on_event("shutdown")
 async def on_shutdown():
     logger.info("Remote Deploy Server shutting down")
-    # Close httpx connection pool
     await codex_agent.close_http_client()
-    # Close all client connections gracefully
-    for info in devices.values():
-        ws = info.get("ws")
-        if ws:
-            try:
-                await ws.close()
-            except Exception:
-                pass
-    # Close all admin connections
-    for ws in admin_connections:
-        try:
-            await ws.close()
-        except Exception:
-            pass
 
-
-# ---------------------------------------------------------------------------
-# Direct run
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import uvicorn
